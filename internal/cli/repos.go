@@ -13,18 +13,23 @@ import (
 
 // repoFlags parses the shared --workspace flag and returns the remaining
 // positional arguments.
-func repoFlags(e *Env, name string, args []string) (string, []string, error) {
+func repoFlags(e *Env, name string, args []string) (string, string, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(e.Err)
 	ws := fs.String("workspace", "", "target workspace (id, slug or issue prefix)")
+	scope := fs.String("scope", config.ScopeMine,
+		"how much of the repository to sweep: mine (your pull requests) or all")
 	if err := fs.Parse(args); err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	return *ws, fs.Args(), nil
+	if *scope != config.ScopeMine && *scope != config.ScopeAll {
+		return "", "", nil, fmt.Errorf("invalid --scope %q, use %q or %q", *scope, config.ScopeMine, config.ScopeAll)
+	}
+	return *ws, *scope, fs.Args(), nil
 }
 
 func runEnable(ctx context.Context, e *Env, args []string) error {
-	wsFlag, rest, err := repoFlags(e, "enable", args)
+	wsFlag, scope, rest, err := repoFlags(e, "enable", args)
 	if err != nil {
 		return err
 	}
@@ -45,16 +50,33 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 	w := f.Find(wsID)
-	if slices.ContainsFunc(w.Repos, func(r string) bool { return strings.EqualFold(r, full) }) {
-		fmt.Fprintf(e.Out, "%s was already enabled in this workspace.\n", full)
-		return nil
+	// Caching the prefix here is what lets a sweep know what a card key looks
+	// like without asking the server every cycle.
+	if list, lerr := e.workspaces(ctx); lerr == nil {
+		for _, info := range list {
+			if info.ID == wsID {
+				w.IssuePrefix = info.IssuePrefix
+			}
+		}
 	}
-	w.Repos = append(w.Repos, full)
+	if existing, ok := w.Repo(full); ok && existing.Scope == scope {
+		fmt.Fprintf(e.Out, "%s was already enabled in this workspace.\n", full)
+		return config.Save(f)
+	}
+	w.Repos = slices.DeleteFunc(w.Repos, func(r config.Repo) bool { return strings.EqualFold(r.Name, full) })
+	w.Repos = append(w.Repos, config.Repo{Name: full, Scope: scope})
 	if err := config.Save(f); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(e.Out, "%s enabled in workspace %s.\n", full, e.workspaceLabel(ctx, wsID))
+	scopeNote := "your pull requests only"
+	if scope == config.ScopeAll {
+		scopeNote = "every recent pull request"
+	}
+	fmt.Fprintf(e.Out, "%s enabled in workspace %s (%s).\n", full, e.workspaceLabel(ctx, wsID), scopeNote)
+	if w.IssuePrefix != "" {
+		fmt.Fprintf(e.Out, "Only pull requests referencing %s-<n> are mirrored.\n", w.IssuePrefix)
+	}
 	if w.InstallationID == 0 {
 		fmt.Fprintf(e.Out, "This workspace has no installation yet: gh multica-sync bootstrap --workspace %s\n", wsID)
 	}
@@ -62,7 +84,7 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 }
 
 func runDisable(ctx context.Context, e *Env, args []string) error {
-	wsFlag, rest, err := repoFlags(e, "disable", args)
+	wsFlag, _, rest, err := repoFlags(e, "disable", args)
 	if err != nil {
 		return err
 	}
@@ -84,7 +106,7 @@ func runDisable(ctx context.Context, e *Env, args []string) error {
 	}
 	w := f.Find(wsID)
 	before := len(w.Repos)
-	w.Repos = slices.DeleteFunc(w.Repos, func(r string) bool { return strings.EqualFold(r, full) })
+	w.Repos = slices.DeleteFunc(w.Repos, func(r config.Repo) bool { return strings.EqualFold(r.Name, full) })
 	if len(w.Repos) == before {
 		fmt.Fprintf(e.Out, "%s was not enabled in this workspace.\n", full)
 		return nil
@@ -113,9 +135,10 @@ func runStatus(ctx context.Context, e *Env) error {
 			fmt.Fprintln(e.Out, "  repositories: none")
 			continue
 		}
+		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(w.IssuePrefix))
 		fmt.Fprintln(e.Out, "  repositories:")
 		for _, r := range w.Repos {
-			fmt.Fprintf(e.Out, "    %s\n", r)
+			fmt.Fprintf(e.Out, "    %-42s scope: %s\n", r.Name, r.EffectiveScope())
 		}
 	}
 

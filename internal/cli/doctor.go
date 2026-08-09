@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fgmacedo/gh-multica-sync/internal/bootstrap"
+	"github.com/fgmacedo/gh-multica-sync/internal/config"
 	"github.com/fgmacedo/gh-multica-sync/internal/ghcli"
 )
 
@@ -130,11 +131,15 @@ func runDoctor(ctx context.Context, e *Env) error {
 	return fmt.Errorf("%d check(s) pending", failed)
 }
 
-func reposLabel(repos []string) string {
+func reposLabel(repos []config.Repo) string {
 	if len(repos) == 0 {
 		return "no repositories enabled"
 	}
-	return strings.Join(repos, ", ")
+	names := make([]string, 0, len(repos))
+	for _, r := range repos {
+		names = append(names, fmt.Sprintf("%s (%s)", r.Name, r.EffectiveScope()))
+	}
+	return strings.Join(names, ", ")
 }
 
 func ping(baseURL string) error {

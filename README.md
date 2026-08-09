@@ -91,13 +91,32 @@ Almost nothing has to be asked because the Multica CLI already stores `server_ur
 |---|---|
 | `doctor` | Diagnose the environment without changing anything |
 | `bootstrap [--write-env]` | Bind the local installation to the workspace |
-| `enable [owner/repo]` | Enable a repository (with no argument, the current one) |
+| `enable [owner/repo] [--scope mine\|all]` | Enable a repository (with no argument, the current one) |
 | `disable [owner/repo]` | Disable it |
 | `status` | Settings, enabled repositories and mirrored pull requests |
 | `sync [owner/repo] [n]` | Sync now, without waiting for the timer |
 | `poll` | Sweep the enabled repositories and emit what changed |
 | `install-timer` | LaunchAgent running every 5 minutes (macOS) |
 | `install-hook` | Optional `pre-push` that speeds up the sweep |
+
+## What gets mirrored
+
+Two filters keep a busy repository quiet, both on by default:
+
+**Only pull requests that reference a card.** A pull request whose title, body
+or branch does not contain `<PREFIX>-<n>` for the workspace is skipped. This is
+not a preference: Multica shows pull requests *inside cards*, so a mirrored pull
+request with no linked issue is a row nobody can see. On a monorepo the
+difference is stark. Pointing this tool at a repository with 153 open pull
+requests and no card references produces zero events; the same repository
+without the filter would emit a stream of them every sweep.
+
+**Only your pull requests.** Discovery passes `--author @me`. Use
+`gh multica-sync enable --scope all` on repositories where teammates open pull
+requests against your cards.
+
+A pull request named explicitly (`gh multica-sync sync owner/repo 42`) bypasses
+the author scope: you asked for that one by name.
 
 ## Closing the card on merge
 

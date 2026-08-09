@@ -159,3 +159,42 @@ func (m *Multica) Bind(workspaceID string, installationID int64) error {
 		return fmt.Errorf("unexpected response from the setup callback: HTTP %d", resp.StatusCode)
 	}
 }
+
+// WorkspaceInfo is a workspace as the API reports it.
+type WorkspaceInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	IssuePrefix string `json:"issue_prefix"`
+}
+
+// Workspaces lists the workspaces the token can see.
+//
+// This comes from the API rather than from the multica CLI because the CLI's
+// list omits the issue prefix, and the prefix is what tells a sweep which pull
+// requests reference a card.
+func (m *Multica) Workspaces() ([]WorkspaceInfo, error) {
+	resp, err := m.do(http.MethodGet, "/api/workspaces")
+	if err != nil {
+		return nil, fmt.Errorf("listing workspaces: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("listing workspaces: HTTP %d", resp.StatusCode)
+	}
+	var direct []WorkspaceInfo
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		return direct, nil
+	}
+	var wrapped struct {
+		Workspaces []WorkspaceInfo `json:"workspaces"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return nil, fmt.Errorf("parsing workspaces: %w", err)
+	}
+	return wrapped.Workspaces, nil
+}

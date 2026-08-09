@@ -18,7 +18,7 @@ type Forge interface {
 	// Name identifies the forge in user-facing messages.
 	Name() string
 	// ListPullRequests returns the most recent pull requests, open or not.
-	ListPullRequests(ctx context.Context, owner, repo string, limit int) ([]payload.Snapshot, error)
+	ListPullRequests(ctx context.Context, owner, repo string, limit int, author string) ([]payload.Snapshot, error)
 	// PullRequest returns a single pull request.
 	PullRequest(ctx context.Context, owner, repo string, number int32) (payload.Snapshot, error)
 	// CurrentRepo resolves the repository of the current working directory.

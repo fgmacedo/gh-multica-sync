@@ -18,25 +18,21 @@ var Version = "dev"
 // Env groups dependencies so commands can be tested without touching the real
 // environment.
 type Env struct {
-	Out io.Writer
-	Err io.Writer
-	GH  ghcli.Runner
-	// Multica shells out to the multica CLI for the few things it already
-	// knows how to do, such as listing workspaces with authentication.
-	Multica ghcli.Runner
-	Forge   *github.Client
-	Settle  func() config.Settings
+	Out    io.Writer
+	Err    io.Writer
+	GH     ghcli.Runner
+	Forge  *github.Client
+	Settle func() config.Settings
 }
 
 func NewEnv() *Env {
 	gh := ghcli.New()
 	return &Env{
-		Out:     os.Stdout,
-		Err:     os.Stderr,
-		GH:      gh,
-		Multica: &ghcli.Exec{Bin: "multica"},
-		Forge:   github.New(gh),
-		Settle:  config.Resolve,
+		Out:    os.Stdout,
+		Err:    os.Stderr,
+		GH:     gh,
+		Forge:  github.New(gh),
+		Settle: config.Resolve,
 	}
 }
 

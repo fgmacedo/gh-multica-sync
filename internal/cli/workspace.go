@@ -2,10 +2,10 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/fgmacedo/gh-multica-sync/internal/bootstrap"
 	"github.com/fgmacedo/gh-multica-sync/internal/config"
 )
 
@@ -37,32 +37,16 @@ func (e *Env) resolveWorkspace(ctx context.Context, s config.Settings, want stri
 	return "", fmt.Errorf("workspace %q not found", want)
 }
 
-type workspaceInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	IssuePrefix string `json:"issue_prefix"`
-}
+type workspaceInfo = bootstrap.WorkspaceInfo
 
-// workspaces lists the workspaces through the Multica CLI, which already knows
-// how to authenticate. Shelling out here keeps this tool from reimplementing
-// the account model.
+// workspaces lists the workspaces through the Multica API, using the token the
+// Multica CLI already stored.
 func (e *Env) workspaces(ctx context.Context) ([]workspaceInfo, error) {
-	out, err := e.Multica.Run(ctx, "workspace", "list", "--output", "json")
-	if err != nil {
-		return nil, err
+	s := e.Settle()
+	if s.ServerURL == "" || s.Token == "" {
+		return nil, fmt.Errorf("no Multica server or token configured")
 	}
-	var list []workspaceInfo
-	if err := json.Unmarshal(out, &list); err != nil {
-		var wrapped struct {
-			Workspaces []workspaceInfo `json:"workspaces"`
-		}
-		if jerr := json.Unmarshal(out, &wrapped); jerr != nil {
-			return nil, fmt.Errorf("parsing workspace list: %w", err)
-		}
-		list = wrapped.Workspaces
-	}
-	return list, nil
+	return bootstrap.NewMultica(s.ServerURL, s.Token).Workspaces()
 }
 
 // label renders a workspace for humans, preferring the prefix because that is

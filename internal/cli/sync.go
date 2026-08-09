@@ -28,6 +28,15 @@ const burstWindow = 3 * time.Minute
 type target struct {
 	owner, repo string
 	ws          config.Workspace
+	cfg         config.Repo
+}
+
+// authorFor turns a repository scope into the gh --author filter.
+func authorFor(r config.Repo) string {
+	if r.EffectiveScope() == config.ScopeAll {
+		return ""
+	}
+	return "@me"
 }
 
 func runSync(ctx context.Context, e *Env, args []string) error {
@@ -69,14 +78,17 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		if serr != nil {
 			return serr
 		}
+		rcfg, _ := ws.Repo(full)
 		var snaps []payload.Snapshot
 		if number > 0 {
+			// An explicit number is a deliberate request, so it bypasses the
+			// scope filter: you asked for this pull request by name.
 			snap, ferr := e.Forge.PullRequest(ctx, owner, repo, number)
 			if ferr != nil {
 				return ferr
 			}
 			snaps = []payload.Snapshot{snap}
-		} else if snaps, err = e.Forge.ListPullRequests(ctx, owner, repo, listLimit); err != nil {
+		} else if snaps, err = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); err != nil {
 			return err
 		}
 		n, eerr := e.emit(ctx, ws, sender, st, snaps)
@@ -107,13 +119,13 @@ func runPoll(ctx context.Context, e *Env) error {
 
 	var targets []target
 	for _, ws := range s.Workspaces {
-		for _, full := range ws.Repos {
-			owner, repo, perr := github.ParseRepo(full)
+		for _, r := range ws.Repos {
+			owner, repo, perr := github.ParseRepo(r.Name)
 			if perr != nil {
 				fmt.Fprintf(e.Err, "warning: %v\n", perr)
 				continue
 			}
-			targets = append(targets, target{owner: owner, repo: repo, ws: ws})
+			targets = append(targets, target{owner: owner, repo: repo, ws: ws, cfg: r})
 		}
 	}
 
@@ -130,7 +142,7 @@ func runPoll(ctx context.Context, e *Env) error {
 			}
 			return 0
 		}
-		snaps, lerr := e.Forge.ListPullRequests(ctx, t.owner, t.repo, listLimit)
+		snaps, lerr := e.Forge.ListPullRequests(ctx, t.owner, t.repo, listLimit, authorFor(t.cfg))
 		if lerr != nil {
 			// One unreachable repository must not stop the others: the timer
 			// runs unattended, and failing everything because of one would
@@ -190,6 +202,12 @@ func runPoll(ctx context.Context, e *Env) error {
 func (e *Env) emit(ctx context.Context, ws config.Workspace, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
 	sent := 0
 	for _, snap := range snaps {
+		// A pull request that references no card of this workspace would be
+		// mirrored into a row nobody can see, since Multica shows pull requests
+		// inside cards. Skipping it here is what keeps a busy repository quiet.
+		if !payload.MentionsIssue(snap, ws.IssuePrefix) {
+			continue
+		}
 		action, changed := payload.DeriveAction(st.Previous(ws.WorkspaceID, snap), snap)
 		if !changed {
 			continue

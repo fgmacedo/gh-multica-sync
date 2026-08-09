@@ -25,9 +25,56 @@ import (
 // them, so a shared id would mirror personal pull requests into a work board
 // and vice versa. Separate ids keep the boards separate.
 type Workspace struct {
-	WorkspaceID    string   `json:"workspace_id"`
-	InstallationID int64    `json:"installation_id"`
-	Repos          []string `json:"repos"`
+	WorkspaceID    string `json:"workspace_id"`
+	InstallationID int64  `json:"installation_id"`
+	// IssuePrefix is cached here so a sweep does not depend on the multica CLI
+	// being installed or the server being reachable to know what a card key
+	// looks like. It is refreshed whenever a command has the answer at hand.
+	IssuePrefix string `json:"issue_prefix,omitempty"`
+	Repos       []Repo `json:"repos"`
+}
+
+// Scope decides how much of a repository a sweep looks at.
+const (
+	// ScopeMine only considers pull requests authored by the authenticated
+	// user. It is the default because the common case is a board of your own
+	// work, and on a shared monorepo it is the difference between looking at
+	// a handful of pull requests and looking at hundreds.
+	ScopeMine = "mine"
+	// ScopeAll considers every recent pull request, which is what you want
+	// when teammates open pull requests against your cards.
+	ScopeAll = "all"
+)
+
+// Repo is an enabled repository plus how widely to look at it.
+type Repo struct {
+	Name  string `json:"name"`
+	Scope string `json:"scope,omitempty"`
+}
+
+// UnmarshalJSON accepts both the object form and the bare string used by
+// earlier versions, so an existing config keeps loading.
+func (r *Repo) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		r.Name, r.Scope = name, ""
+		return nil
+	}
+	type plain Repo
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*r = Repo(p)
+	return nil
+}
+
+// EffectiveScope resolves the default.
+func (r Repo) EffectiveScope() string {
+	if r.Scope == ScopeAll {
+		return ScopeAll
+	}
+	return ScopeMine
 }
 
 // File is what we persist: only what no other source knows.
@@ -36,8 +83,8 @@ type File struct {
 
 	// Legacy single-workspace fields, kept only so an existing install keeps
 	// working. Load folds them into Workspaces and Save never writes them back.
-	LegacyInstallationID int64    `json:"installation_id,omitempty"`
-	LegacyRepos          []string `json:"repos,omitempty"`
+	LegacyInstallationID int64  `json:"installation_id,omitempty"`
+	LegacyRepos          []Repo `json:"repos,omitempty"`
 }
 
 // Settings is the resolved view, ready to use.
@@ -98,7 +145,9 @@ func Save(f File) error {
 	}
 	f.LegacyInstallationID, f.LegacyRepos = 0, nil
 	for i := range f.Workspaces {
-		slices.Sort(f.Workspaces[i].Repos)
+		slices.SortFunc(f.Workspaces[i].Repos, func(a, b Repo) int {
+			return strings.Compare(a.Name, b.Name)
+		})
 	}
 	raw, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
@@ -171,11 +220,21 @@ func (s Settings) Workspace(workspaceID string) (Workspace, bool) {
 func (s Settings) RepoWorkspaces(repo string) []Workspace {
 	var out []Workspace
 	for _, w := range s.Workspaces {
-		if slices.ContainsFunc(w.Repos, func(r string) bool { return strings.EqualFold(r, repo) }) {
+		if _, ok := w.Repo(repo); ok {
 			out = append(out, w)
 		}
 	}
 	return out
+}
+
+// Repo finds an enabled repository inside a workspace.
+func (w Workspace) Repo(name string) (Repo, bool) {
+	for _, r := range w.Repos {
+		if strings.EqualFold(r.Name, name) {
+			return r, true
+		}
+	}
+	return Repo{}, false
 }
 
 // EnabledRepos reports how many repositories are enabled across all workspaces.

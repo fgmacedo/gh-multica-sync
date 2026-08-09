@@ -46,13 +46,20 @@ func New(r ghcli.Runner) *Client { return &Client{gh: r} }
 
 func (c *Client) Name() string { return "github" }
 
-func (c *Client) ListPullRequests(ctx context.Context, owner, repo string, limit int) ([]payload.Snapshot, error) {
-	out, err := c.gh.Run(ctx, "pr", "list",
-		"--repo", owner+"/"+repo,
+// ListPullRequests returns recent pull requests. A non-empty author narrows the
+// listing to that login ("@me" for the authenticated user), which is what keeps
+// a shared monorepo from flooding the sweep with other people's work.
+func (c *Client) ListPullRequests(ctx context.Context, owner, repo string, limit int, author string) ([]payload.Snapshot, error) {
+	args := []string{"pr", "list",
+		"--repo", owner + "/" + repo,
 		"--state", "all",
 		"--limit", fmt.Sprint(limit),
 		"--json", prFields,
-	)
+	}
+	if author != "" {
+		args = append(args, "--author", author)
+	}
+	out, err := c.gh.Run(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
