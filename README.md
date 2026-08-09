@@ -135,7 +135,7 @@ A title prefix or a branch reference **links without closing**. If you use agent
 
 ## Limitations, honestly
 
-- **CI status and mergeability stay empty on the card.** Those require authenticating as a GitHub App (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`) so Multica can fetch snapshots. What you get here is the pull request on the card, the link, and the auto-close.
+- **CI status stays empty on the card.** Multica treats `check_suite`, `check_run` and `status` webhooks as pure triggers and never reads their payload: it re-fetches from the API, which requires authenticating as a GitHub App (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`). Synthesizing those events would only trigger a fetch that cannot happen. Mergeability, by contrast, does work, because it travels in the pull request payload itself.
 - **Up to five minutes of latency.** `gh multica-sync sync` covers the times you are in a hurry.
 - **The installation is fabricated.** If you later install a real GitHub App, remove the local installation first, from Multica's Settings screen, or the ids will conflict.
 - **This is an unsupported integration.** If a Multica upgrade starts validating the installation against the GitHub API, it stops working. That is why every send first confirms the installation is still bound, and fails with a clear message instead of disappearing quietly.
