@@ -1,0 +1,126 @@
+// Package state records what we have already seen of each pull request, so a
+// poll only emits an event when something actually changed.
+//
+// Without it every cycle would resend every pull request. Multica would cope
+// (the upsert is idempotent), but the server log would turn to noise and the
+// network cost would scale with history instead of with change.
+package state
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/fgmacedo/gh-multica-sync/internal/discover"
+	"github.com/fgmacedo/gh-multica-sync/internal/payload"
+)
+
+// Entry is the last known view of a pull request, plus when it was synced.
+type Entry struct {
+	Snapshot payload.Snapshot `json:"snapshot"`
+	SyncedAt time.Time        `json:"synced_at"`
+	Action   string           `json:"last_action"`
+}
+
+// Store is the whole file: entries keyed by owner/repo#number, plus an avatar
+// cache by login (a field `gh pr list` does not return, worth one extra call
+// the first time we see each author) and push marks left by the optional hook.
+type Store struct {
+	Entries map[string]Entry     `json:"entries"`
+	Avatars map[string]string    `json:"avatars,omitempty"`
+	Pushes  map[string]time.Time `json:"pushes,omitempty"`
+}
+
+func Path() string { return filepath.Join(discover.StateDir(), "state.json") }
+
+// Key identifies a pull request stably.
+func Key(owner, repo string, number int32) string {
+	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
+}
+
+// Load reads the state. A missing file yields an empty, usable Store, which is
+// the first-run case.
+func Load() (*Store, error) {
+	s := &Store{Entries: map[string]Entry{}, Avatars: map[string]string{}, Pushes: map[string]time.Time{}}
+	raw, err := os.ReadFile(Path())
+	if os.IsNotExist(err) {
+		return s, nil
+	}
+	if err != nil {
+		return s, fmt.Errorf("reading %s: %w", Path(), err)
+	}
+	if err := json.Unmarshal(raw, s); err != nil {
+		return s, fmt.Errorf("parsing %s: %w", Path(), err)
+	}
+	if s.Entries == nil {
+		s.Entries = map[string]Entry{}
+	}
+	if s.Avatars == nil {
+		s.Avatars = map[string]string{}
+	}
+	if s.Pushes == nil {
+		s.Pushes = map[string]time.Time{}
+	}
+	return s, nil
+}
+
+// Save writes the state atomically: to a temporary file in the same directory,
+// then rename. A poll interrupted mid-write would otherwise leave truncated
+// JSON, and the next cycle would re-emit everything as if it were new.
+func (s *Store) Save() error {
+	dir := discover.StateDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+	raw, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "state-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(raw, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), Path())
+}
+
+// Previous returns the last snapshot of a pull request, or nil the first time.
+func (s *Store) Previous(owner, repo string, number int32) *payload.Snapshot {
+	e, ok := s.Entries[Key(owner, repo, number)]
+	if !ok {
+		return nil
+	}
+	snap := e.Snapshot
+	return &snap
+}
+
+// Record stores the new view of a pull request.
+func (s *Store) Record(snap payload.Snapshot, action string) {
+	s.Entries[Key(snap.Owner, snap.Repo, snap.Number)] = Entry{
+		Snapshot: snap,
+		SyncedAt: time.Now().UTC(),
+		Action:   action,
+	}
+}
+
+// MarkPush records that a push happened in a repository. The optional hook
+// writes this, and it is what makes the next poll look again sooner.
+func (s *Store) MarkPush(repo string) { s.Pushes[repo] = time.Now().UTC() }
+
+// RecentPush reports whether a push is recent enough to justify a second look.
+func (s *Store) RecentPush(repo string, window time.Duration) bool {
+	t, ok := s.Pushes[repo]
+	return ok && time.Since(t) < window
+}
