@@ -133,7 +133,7 @@ func runMarkPush(ctx context.Context, e *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := state.Load()
+	st, err := state.Load(e.Settle().CurrentWorkspaceID)
 	if err != nil {
 		return err
 	}

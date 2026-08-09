@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,70 +11,111 @@ import (
 	"github.com/fgmacedo/gh-multica-sync/internal/state"
 )
 
+// repoFlags parses the shared --workspace flag and returns the remaining
+// positional arguments.
+func repoFlags(e *Env, name string, args []string) (string, []string, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(e.Err)
+	ws := fs.String("workspace", "", "target workspace (id, slug or issue prefix)")
+	if err := fs.Parse(args); err != nil {
+		return "", nil, err
+	}
+	return *ws, fs.Args(), nil
+}
+
 func runEnable(ctx context.Context, e *Env, args []string) error {
-	owner, repo, err := e.resolveRepo(ctx, args)
+	wsFlag, rest, err := repoFlags(e, "enable", args)
+	if err != nil {
+		return err
+	}
+	owner, repo, err := e.resolveRepo(ctx, rest)
 	if err != nil {
 		return err
 	}
 	full := owner + "/" + repo
 
-	f, err := config.Load()
+	s := e.Settle()
+	wsID, err := e.resolveWorkspace(ctx, s, wsFlag)
 	if err != nil {
 		return err
 	}
-	if slices.ContainsFunc(f.Repos, func(r string) bool { return strings.EqualFold(r, full) }) {
-		fmt.Fprintf(e.Out, "%s was already enabled.\n", full)
+
+	f, err := config.Load(s.CurrentWorkspaceID)
+	if err != nil {
+		return err
+	}
+	w := f.Find(wsID)
+	if slices.ContainsFunc(w.Repos, func(r string) bool { return strings.EqualFold(r, full) }) {
+		fmt.Fprintf(e.Out, "%s was already enabled in this workspace.\n", full)
 		return nil
 	}
-	f.Repos = append(f.Repos, full)
+	w.Repos = append(w.Repos, full)
 	if err := config.Save(f); err != nil {
 		return err
 	}
-	fmt.Fprintf(e.Out, "%s enabled.\n", full)
-	if f.InstallationID == 0 {
-		fmt.Fprintln(e.Out, "The installation is not bound yet: gh multica-sync bootstrap")
+
+	fmt.Fprintf(e.Out, "%s enabled in workspace %s.\n", full, e.workspaceLabel(ctx, wsID))
+	if w.InstallationID == 0 {
+		fmt.Fprintf(e.Out, "This workspace has no installation yet: gh multica-sync bootstrap --workspace %s\n", wsID)
 	}
 	return nil
 }
 
 func runDisable(ctx context.Context, e *Env, args []string) error {
-	owner, repo, err := e.resolveRepo(ctx, args)
+	wsFlag, rest, err := repoFlags(e, "disable", args)
+	if err != nil {
+		return err
+	}
+	owner, repo, err := e.resolveRepo(ctx, rest)
 	if err != nil {
 		return err
 	}
 	full := owner + "/" + repo
 
-	f, err := config.Load()
+	s := e.Settle()
+	wsID, err := e.resolveWorkspace(ctx, s, wsFlag)
 	if err != nil {
 		return err
 	}
-	before := len(f.Repos)
-	f.Repos = slices.DeleteFunc(f.Repos, func(r string) bool { return strings.EqualFold(r, full) })
-	if len(f.Repos) == before {
-		fmt.Fprintf(e.Out, "%s was not enabled.\n", full)
+
+	f, err := config.Load(s.CurrentWorkspaceID)
+	if err != nil {
+		return err
+	}
+	w := f.Find(wsID)
+	before := len(w.Repos)
+	w.Repos = slices.DeleteFunc(w.Repos, func(r string) bool { return strings.EqualFold(r, full) })
+	if len(w.Repos) == before {
+		fmt.Fprintf(e.Out, "%s was not enabled in this workspace.\n", full)
 		return nil
 	}
 	if err := config.Save(f); err != nil {
 		return err
 	}
-	fmt.Fprintf(e.Out, "%s disabled.\n", full)
+	fmt.Fprintf(e.Out, "%s disabled in workspace %s.\n", full, e.workspaceLabel(ctx, wsID))
 	return nil
 }
 
 func runStatus(ctx context.Context, e *Env) error {
 	s := e.Settle()
+	list, _ := e.workspaces(ctx)
 
-	fmt.Fprintf(e.Out, "server:        %s\n", orDash(s.ServerURL))
-	fmt.Fprintf(e.Out, "workspace:     %s\n", orDash(s.WorkspaceID))
-	fmt.Fprintf(e.Out, "installation:  %s\n", orDashInt(s.InstallationID))
-	fmt.Fprintf(e.Out, "config:        %s\n", s.ConfigPath)
+	fmt.Fprintf(e.Out, "server:   %s\n", orDash(s.ServerURL))
+	fmt.Fprintf(e.Out, "config:   %s\n", s.ConfigPath)
 
-	if len(s.Repos) == 0 {
-		fmt.Fprintln(e.Out, "\nno repositories enabled")
-	} else {
-		fmt.Fprintln(e.Out, "\nenabled repositories:")
-		for _, r := range s.Repos {
-			fmt.Fprintf(e.Out, "  %s\n", r)
+	if len(s.Workspaces) == 0 {
+		fmt.Fprintln(e.Out, "\nno workspace configured yet: gh multica-sync bootstrap")
+	}
+	for _, w := range s.Workspaces {
+		fmt.Fprintf(e.Out, "\nworkspace %s\n", label(list, w.WorkspaceID))
+		fmt.Fprintf(e.Out, "  installation: %s\n", orDashInt(w.InstallationID))
+		if len(w.Repos) == 0 {
+			fmt.Fprintln(e.Out, "  repositories: none")
+			continue
+		}
+		fmt.Fprintln(e.Out, "  repositories:")
+		for _, r := range w.Repos {
+			fmt.Fprintf(e.Out, "    %s\n", r)
 		}
 	}
 
@@ -81,14 +123,19 @@ func runStatus(ctx context.Context, e *Env) error {
 	// user came to find out.
 	if owner, repo, err := e.Forge.CurrentRepo(ctx); err == nil {
 		full := owner + "/" + repo
-		mark := "not enabled"
-		if s.RepoEnabled(full) {
-			mark = "enabled"
+		in := s.RepoWorkspaces(full)
+		if len(in) == 0 {
+			fmt.Fprintf(e.Out, "\ncurrent repository: %s (not enabled)\n", full)
+		} else {
+			names := make([]string, 0, len(in))
+			for _, w := range in {
+				names = append(names, label(list, w.WorkspaceID))
+			}
+			fmt.Fprintf(e.Out, "\ncurrent repository: %s (enabled in %s)\n", full, strings.Join(names, ", "))
 		}
-		fmt.Fprintf(e.Out, "\ncurrent repository: %s (%s)\n", full, mark)
 	}
 
-	st, err := state.Load()
+	st, err := state.Load(s.CurrentWorkspaceID)
 	if err == nil && len(st.Entries) > 0 {
 		fmt.Fprintf(e.Out, "\n%d mirrored pull request(s):\n", len(st.Entries))
 		keys := make([]string, 0, len(st.Entries))
@@ -98,10 +145,24 @@ func runStatus(ctx context.Context, e *Env) error {
 		slices.Sort(keys)
 		for _, k := range keys {
 			en := st.Entries[k]
-			fmt.Fprintf(e.Out, "  %-28s %-8s %s\n", k, strings.ToLower(en.Snapshot.State), en.SyncedAt.Format("2006-01-02 15:04"))
+			// Keys carry the workspace UUID, which is noise on screen: show the
+			// workspace by name and the pull request by its usual form.
+			wsID, pr, _ := strings.Cut(k, "|")
+			fmt.Fprintf(e.Out, "  %-14s %-30s %-8s %s\n",
+				label(list, wsID), pr, strings.ToLower(en.Snapshot.State), en.SyncedAt.Format("2006-01-02 15:04"))
 		}
 	}
 	return nil
+}
+
+// workspaceLabel is the forgiving variant used in messages: it never fails, it
+// just falls back to the id.
+func (e *Env) workspaceLabel(ctx context.Context, id string) string {
+	list, err := e.workspaces(ctx)
+	if err != nil {
+		return short(id)
+	}
+	return label(list, id)
 }
 
 func orDash(s string) string {

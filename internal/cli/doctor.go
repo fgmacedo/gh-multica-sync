@@ -37,8 +37,7 @@ func runDoctor(ctx context.Context, e *Env) error {
 	if s.CLIErr != nil {
 		checks = append(checks, check{"multica config", false, s.CLIErr.Error(), "multica setup self-host"})
 	} else {
-		checks = append(checks, check{"multica config", true,
-			fmt.Sprintf("%s, workspace %s", s.ServerURL, short(s.WorkspaceID)), ""})
+		checks = append(checks, check{"multica config", true, s.ServerURL, ""})
 	}
 
 	// 3. Server reachable.
@@ -64,43 +63,42 @@ func runDoctor(ctx context.Context, e *Env) error {
 		checks = append(checks, check{"webhook secret", true, "read from " + s.EnvPath, ""})
 	}
 
-	// 5. Does the running server consider the integration configured? This is
-	// the check that counts, because it answers for the live process rather
-	// than for a file on disk that may have been edited without a restart.
-	var bound bool
-	if s.ServerURL != "" && s.Token != "" && s.WorkspaceID != "" {
-		m := bootstrap.NewMultica(s.ServerURL, s.Token)
-		resp, err := m.Installations(s.WorkspaceID)
+	// 5. Per workspace: is the integration live, is the installation bound, and
+	// are there repositories enabled. Checking against the running server is
+	// what matters, because it answers for the live process rather than for a
+	// file on disk that may have been edited without a restart.
+	list, _ := e.workspaces(ctx)
+	if len(s.Workspaces) == 0 {
+		checks = append(checks, check{"workspaces configured", false, "none",
+			"gh multica-sync bootstrap"})
+	}
+	for _, w := range s.Workspaces {
+		name := label(list, w.WorkspaceID)
+		if s.ServerURL == "" || s.Token == "" {
+			continue
+		}
+		resp, err := bootstrap.NewMultica(s.ServerURL, s.Token).Installations(w.WorkspaceID)
 		switch {
 		case err != nil:
-			checks = append(checks, check{"integration on the server", false, err.Error(), ""})
+			checks = append(checks, check{"workspace " + name, false, err.Error(), ""})
+			continue
 		case !resp.Configured:
-			checks = append(checks, check{"integration on the server", false,
+			checks = append(checks, check{"workspace " + name, false,
 				"the running server does not see GITHUB_APP_SLUG and GITHUB_WEBHOOK_SECRET yet",
 				"gh multica-sync bootstrap --write-env, then restart the backend"})
-		default:
-			checks = append(checks, check{"integration on the server", true, "", ""})
-			bound = resp.Bound(s.InstallationID)
+			continue
+		case w.InstallationID == 0:
+			checks = append(checks, check{"workspace " + name, false, "no installation bound",
+				"gh multica-sync bootstrap --workspace " + w.WorkspaceID})
+			continue
+		case !resp.Bound(w.InstallationID):
+			checks = append(checks, check{"workspace " + name, false,
+				fmt.Sprintf("installation %d does not appear in this workspace", w.InstallationID),
+				"gh multica-sync bootstrap --workspace " + w.WorkspaceID})
+			continue
 		}
-	}
-
-	// 6. Installation bound. This is what prevents the silent drop.
-	switch {
-	case s.InstallationID == 0:
-		checks = append(checks, check{"installation bound", false, "no local installation created", "gh multica-sync bootstrap"})
-	case !bound:
-		checks = append(checks, check{"installation bound", false,
-			fmt.Sprintf("id %d does not appear in the workspace", s.InstallationID), "gh multica-sync bootstrap"})
-	default:
-		checks = append(checks, check{"installation bound", true, fmt.Sprint(s.InstallationID), ""})
-	}
-
-	// 7. Enabled repositories.
-	if len(s.Repos) == 0 {
-		checks = append(checks, check{"enabled repositories", false, "none",
-			"gh multica-sync enable (inside a checkout)"})
-	} else {
-		checks = append(checks, check{"enabled repositories", true, strings.Join(s.Repos, ", "), ""})
+		info := fmt.Sprintf("installation %d, %s", w.InstallationID, reposLabel(w.Repos))
+		checks = append(checks, check{"workspace " + name, true, info, ""})
 	}
 
 	failed := 0
@@ -122,10 +120,21 @@ func runDoctor(ctx context.Context, e *Env) error {
 
 	fmt.Fprintln(e.Out)
 	if failed == 0 {
+		if s.EnabledRepos() == 0 {
+			fmt.Fprintln(e.Out, "Nothing enabled yet: run 'gh multica-sync enable' inside a checkout.")
+			return nil
+		}
 		fmt.Fprintln(e.Out, "All set. Polling can run.")
 		return nil
 	}
 	return fmt.Errorf("%d check(s) pending", failed)
+}
+
+func reposLabel(repos []string) string {
+	if len(repos) == 0 {
+		return "no repositories enabled"
+	}
+	return strings.Join(repos, ", ")
 }
 
 func ping(baseURL string) error {

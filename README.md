@@ -2,17 +2,16 @@
 
 Mirror GitHub pull requests into a **local** [Multica](https://github.com/multica-ai/multica) instance, with no GitHub App and no public tunnel.
 
-Cards start showing their pull request, auto-linking by issue identifier works, and merging closes the card. Enabled per repository: anything not on the list is never touched.
+Cards start showing their pull request, auto-linking by issue identifier works, and merging closes the card. Enabled per repository, per workspace: anything not on the list is never touched.
 
 ```
 $ gh multica-sync doctor
   [ok     ] gh authenticated
-  [ok     ] multica config: http://localhost:8080, workspace 4ade6eb0
+  [ok     ] multica config: http://localhost:8080
   [ok     ] server responding: http://localhost:8080
   [ok     ] webhook secret: read from ~/.multica/server/.env
-  [ok     ] integration on the server
-  [ok     ] installation bound: 9167915677
-  [ok     ] enabled repositories: acme/widgets
+  [ok     ] workspace Personal (ACME): installation 9167915677, acme/widgets
+  [ok     ] workspace Work (WRK): installation 9419679405, corp/platform
 
 All set. Polling can run.
 ```
@@ -64,6 +63,23 @@ gh multica-sync bootstrap               # bind the installation
 cd my-project && gh multica-sync enable
 gh multica-sync install-timer           # sweep every 5 minutes
 ```
+
+### Several workspaces
+
+Multica's issue prefix lives on the workspace, not on the project, so keeping
+personal and work cards apart means separate workspaces. This tool follows that:
+`bootstrap`, `enable` and `disable` take `--workspace <id|slug|prefix>`, and
+default to the workspace the Multica CLI points at.
+
+```bash
+gh multica-sync bootstrap --workspace work
+cd corp-project && gh multica-sync enable --workspace work
+```
+
+Each workspace gets **its own installation id**, and that is not cosmetic:
+Multica binds an installation to one or more workspaces and fans every event out
+to all of them, so a shared id would mirror your personal pull requests into the
+work board. Separate ids keep the boards separate.
 
 `--write-env` sets `GITHUB_APP_SLUG` (a placeholder slug, used only to build a URL that is never visited) and `GITHUB_WEBHOOK_SECRET` (random) in your installation's `.env`. Restarting the backend is the only step that touches your server, which is why it never happens without you asking.
 

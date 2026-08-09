@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fgmacedo/gh-multica-sync/internal/discover"
@@ -35,14 +36,24 @@ type Store struct {
 
 func Path() string { return filepath.Join(discover.StateDir(), "state.json") }
 
-// Key identifies a pull request stably.
-func Key(owner, repo string, number int32) string {
-	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
+// Key identifies a pull request within a workspace.
+//
+// The workspace is part of the key because the same pull request can be
+// mirrored into more than one board, each through its own installation. Keying
+// only by repository would make the second board miss every event the first one
+// already consumed.
+func Key(workspaceID, owner, repo string, number int32) string {
+	return fmt.Sprintf("%s|%s/%s#%d", workspaceID, owner, repo, number)
 }
 
 // Load reads the state. A missing file yields an empty, usable Store, which is
 // the first-run case.
-func Load() (*Store, error) {
+//
+// legacyWorkspace re-keys entries written before keys carried a workspace. It
+// matters because an unrecognized key looks like a pull request we have never
+// seen, and the next sweep would re-emit every one of them, including a closed
+// action for pull requests that merged long ago.
+func Load(legacyWorkspace string) (*Store, error) {
 	s := &Store{Entries: map[string]Entry{}, Avatars: map[string]string{}, Pushes: map[string]time.Time{}}
 	raw, err := os.ReadFile(Path())
 	if os.IsNotExist(err) {
@@ -62,6 +73,15 @@ func Load() (*Store, error) {
 	}
 	if s.Pushes == nil {
 		s.Pushes = map[string]time.Time{}
+	}
+	if legacyWorkspace != "" {
+		for k, v := range s.Entries {
+			if strings.Contains(k, "|") {
+				continue
+			}
+			delete(s.Entries, k)
+			s.Entries[legacyWorkspace+"|"+k] = v
+		}
 	}
 	return s, nil
 }
@@ -97,18 +117,18 @@ func (s *Store) Save() error {
 }
 
 // Previous returns the last snapshot of a pull request, or nil the first time.
-func (s *Store) Previous(owner, repo string, number int32) *payload.Snapshot {
-	e, ok := s.Entries[Key(owner, repo, number)]
+func (s *Store) Previous(workspaceID string, snap payload.Snapshot) *payload.Snapshot {
+	e, ok := s.Entries[Key(workspaceID, snap.Owner, snap.Repo, snap.Number)]
 	if !ok {
 		return nil
 	}
-	snap := e.Snapshot
-	return &snap
+	prev := e.Snapshot
+	return &prev
 }
 
 // Record stores the new view of a pull request.
-func (s *Store) Record(snap payload.Snapshot, action string) {
-	s.Entries[Key(snap.Owner, snap.Repo, snap.Number)] = Entry{
+func (s *Store) Record(workspaceID string, snap payload.Snapshot, action string) {
+	s.Entries[Key(workspaceID, snap.Owner, snap.Repo, snap.Number)] = Entry{
 		Snapshot: snap,
 		SyncedAt: time.Now().UTC(),
 		Action:   action,
