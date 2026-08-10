@@ -1,8 +1,8 @@
 // Package ghcli shells out to gh.
 //
-// Delegating authentication to gh is a product decision, not laziness: anyone
-// installing this as a gh extension already has gh authenticated, so there is
-// no new token to create, store or rotate.
+// Authentication is delegated to gh: anyone installing this as a gh extension
+// already has gh authenticated, so there is no new token to create, store or
+// rotate.
 package ghcli
 
 import (

@@ -111,8 +111,8 @@ func Run(ctx context.Context, e *Env, args []string) int {
 }
 
 // resolveRepo accepts "owner/repo" or, with no argument, resolves the current
-// directory. An explicit repository wins so the tool can run outside a
-// checkout, which is what the timer does.
+// directory. An explicit repository is what lets the timer run outside a
+// checkout.
 func (e *Env) resolveRepo(ctx context.Context, args []string) (string, string, error) {
 	if len(args) > 0 && args[0] != "" {
 		return github.ParseRepo(args[0])

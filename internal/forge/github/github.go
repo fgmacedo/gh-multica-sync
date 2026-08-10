@@ -11,10 +11,9 @@ import (
 	"github.com/fgmacedo/gh-multica-sync/internal/payload"
 )
 
-// prFields are the fields we ask gh for. Each one exists because
-// mirrorPullRequestForWorkspace, on Multica's side, reads its counterpart in
-// the payload: asking for less would leave a column empty on the card, asking
-// for more would be weight with no destination.
+// prFields are the fields we ask gh for: exactly the ones
+// mirrorPullRequestForWorkspace reads on Multica's side. Asking for less leaves
+// a column empty on the card.
 const prFields = "number,title,body,state,isDraft,mergedAt,closedAt,createdAt,updatedAt,url," +
 	"headRefName,headRefOid,author,additions,deletions,changedFiles,mergeStateStatus"
 
@@ -47,8 +46,7 @@ func New(r ghcli.Runner) *Client { return &Client{gh: r} }
 func (c *Client) Name() string { return "github" }
 
 // ListPullRequests returns recent pull requests. A non-empty author narrows the
-// listing to that login ("@me" for the authenticated user), which is what keeps
-// a shared monorepo from flooding the sweep with other people's work.
+// listing to that login ("@me" for the authenticated user).
 func (c *Client) ListPullRequests(ctx context.Context, owner, repo string, limit int, author string) ([]payload.Snapshot, error) {
 	args := []string{"pr", "list",
 		"--repo", owner + "/" + repo,
@@ -87,8 +85,7 @@ func (c *Client) PullRequest(ctx context.Context, owner, repo string, number int
 	return toSnapshot(owner, repo, pr), nil
 }
 
-// CurrentRepo resolves the repository from the current directory, which is
-// what allows `gh multica-sync enable` with no argument inside a checkout.
+// CurrentRepo resolves the repository from the current directory.
 func (c *Client) CurrentRepo(ctx context.Context) (string, string, error) {
 	out, err := c.gh.Run(ctx, "repo", "view", "--json", "owner,name")
 	if err != nil {
@@ -109,9 +106,8 @@ func (c *Client) CurrentRepo(ctx context.Context) (string, string, error) {
 	return v.Owner.Login, v.Name, nil
 }
 
-// AvatarURL fetches an author's avatar. `gh pr list` does not return this
-// field, and it is purely cosmetic on the card, so callers treat a failure as
-// absence rather than as an error.
+// AvatarURL fetches an author's avatar. It costs an extra call because
+// `gh pr list` does not return this field.
 func (c *Client) AvatarURL(ctx context.Context, login string) (string, error) {
 	out, err := c.gh.Run(ctx, "api", "users/"+login, "--jq", ".avatar_url")
 	if err != nil {

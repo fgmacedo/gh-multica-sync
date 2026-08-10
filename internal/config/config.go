@@ -20,16 +20,15 @@ import (
 // Workspace is one Multica workspace we sync into, with the repositories
 // enabled for it.
 //
-// Each workspace gets its own installation id on purpose. Multica binds an
-// installation to one or more workspaces and fans every event out to all of
-// them, so a shared id would mirror personal pull requests into a work board
-// and vice versa. Separate ids keep the boards separate.
+// Each workspace gets its own installation id: Multica fans every event out to
+// all workspaces bound to an installation, so a shared id would mirror personal
+// pull requests into a work board and vice versa.
 type Workspace struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID int64  `json:"installation_id"`
-	// IssuePrefix is cached here so a sweep does not depend on the multica CLI
-	// being installed or the server being reachable to know what a card key
-	// looks like. It is refreshed whenever a command has the answer at hand.
+	// IssuePrefix is cached so a sweep knows what a card key looks like without
+	// the multica CLI installed or the server reachable. Refreshed whenever a
+	// command has the answer at hand.
 	IssuePrefix string `json:"issue_prefix,omitempty"`
 	Repos       []Repo `json:"repos"`
 }
@@ -37,12 +36,11 @@ type Workspace struct {
 // Scope decides how much of a repository a sweep looks at.
 const (
 	// ScopeMine only considers pull requests authored by the authenticated
-	// user. It is the default because the common case is a board of your own
-	// work, and on a shared monorepo it is the difference between looking at
-	// a handful of pull requests and looking at hundreds.
+	// user. It is the default: on a shared monorepo it is the difference
+	// between looking at a handful of pull requests and looking at hundreds.
 	ScopeMine = "mine"
-	// ScopeAll considers every recent pull request, which is what you want
-	// when teammates open pull requests against your cards.
+	// ScopeAll considers every recent pull request, for when teammates open
+	// pull requests against your cards.
 	ScopeAll = "all"
 )
 
@@ -69,7 +67,7 @@ func (r *Repo) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// EffectiveScope resolves the default.
+// EffectiveScope resolves the default, ScopeMine.
 func (r Repo) EffectiveScope() string {
 	if r.Scope == ScopeAll {
 		return ScopeAll
@@ -94,8 +92,8 @@ type Settings struct {
 	WebhookSecret string
 	AppSlug       string
 
-	// CurrentWorkspaceID is the workspace the Multica CLI is pointed at. It is
-	// the default target for commands that take one.
+	// CurrentWorkspaceID is the workspace the Multica CLI is pointed at, the
+	// default target for commands that take one.
 	CurrentWorkspaceID string
 
 	Workspaces []Workspace
@@ -104,17 +102,17 @@ type Settings struct {
 	EnvPath    string
 	ConfigPath string
 
-	// Discovery errors do not abort resolution: `doctor` has to report what is
-	// missing rather than die on the first problem.
+	// Discovery errors do not abort resolution: `doctor` reports everything
+	// that is missing rather than dying on the first problem.
 	CLIErr error
 	EnvErr error
 }
 
 func Path() string { return filepath.Join(discover.StateDir(), "config.json") }
 
-// Load reads our own config. A missing file is not an error: it means a fresh
-// install. The legacy layout is folded in using fallbackWorkspace, which is the
-// only workspace such an install could have been using.
+// Load reads our own config. A missing file means a fresh install, not an
+// error. The legacy single-workspace layout is folded into fallbackWorkspace,
+// the only workspace such an install could have been using.
 func Load(fallbackWorkspace string) (File, error) {
 	raw, err := os.ReadFile(Path())
 	if os.IsNotExist(err) {
@@ -190,8 +188,6 @@ func Resolve() Settings {
 		s.Workspaces = f.Workspaces
 	}
 
-	// The environment has the final say, which is what allows running against a
-	// server on another machine, or testing without touching any file.
 	overrideStr(&s.ServerURL, "MULTICA_SYNC_SERVER_URL")
 	overrideStr(&s.CurrentWorkspaceID, "MULTICA_SYNC_WORKSPACE_ID")
 	overrideStr(&s.Token, "MULTICA_SYNC_TOKEN")
@@ -214,9 +210,8 @@ func (s Settings) Workspace(workspaceID string) (Workspace, bool) {
 	return Workspace{}, false
 }
 
-// RepoWorkspaces returns every workspace a repository is enabled in. A
-// repository may legitimately belong to more than one: they are separate
-// boards with separate installations, so the events stay separate too.
+// RepoWorkspaces returns every workspace a repository is enabled in. More than
+// one is legitimate: separate boards, separate installations.
 func (s Settings) RepoWorkspaces(repo string) []Workspace {
 	var out []Workspace
 	for _, w := range s.Workspaces {
@@ -252,8 +247,7 @@ func overrideStr(dst *string, envKey string) {
 	}
 }
 
-// ParseInstallationID exists so the environment override keeps working for
-// tests and for unusual setups.
+// ParseInstallationID parses an installation id coming from the environment.
 func ParseInstallationID(v string) (int64, bool) {
 	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 	return n, err == nil

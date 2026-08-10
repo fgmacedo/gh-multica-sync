@@ -9,7 +9,6 @@ import (
 )
 
 // Known HMAC-SHA256 vector, the same one GitHub's webhook documentation uses.
-// If this assertion breaks, the signature is wrong and nothing else matters.
 func TestSignKnownVector(t *testing.T) {
 	got := Sign("It's a Secret to Everybody", []byte("Hello, World!"))
 	want := "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
@@ -18,8 +17,7 @@ func TestSignKnownVector(t *testing.T) {
 	}
 }
 
-// The signature must cover exactly the bytes we send: serializing twice would
-// let a field reordering invalidate the delivery.
+// Serializing twice would let a field reordering invalidate the delivery.
 func TestSendSignsTheBodyItSends(t *testing.T) {
 	const secret = "topsecret"
 	var gotSig, gotEvent, gotDelivery string

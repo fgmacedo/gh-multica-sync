@@ -33,7 +33,7 @@ func TestValidateInterval(t *testing.T) {
 	}
 }
 
-// The plist is the source of truth for the interval, so reading it back has to
+// The plist is the source of truth for the interval, so the read-back has to
 // survive the exact formatting the template produces.
 func TestInstalledIntervalParsesTheTemplate(t *testing.T) {
 	rendered := renderPlist(t, 900)

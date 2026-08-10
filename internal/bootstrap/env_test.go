@@ -45,9 +45,8 @@ JWT_SECRET=abc
 	if !strings.Contains(s, "POSTGRES_DB=multica") || !strings.Contains(s, "JWT_SECRET=abc") {
 		t.Errorf("unrelated lines were lost:\n%s", s)
 	}
-	// Only the assignment line carries the "=": the comment mentions the key
-	// without it. More than one occurrence would mean we appended instead of
-	// replacing, and compose would then see the key twice.
+	// Only the assignment line carries the "=", the comment mentions the key
+	// without it. A second occurrence would mean compose sees the key twice.
 	if strings.Count(s, "GITHUB_APP_SLUG=") != 1 {
 		t.Errorf("key duplicated instead of replaced:\n%s", s)
 	}

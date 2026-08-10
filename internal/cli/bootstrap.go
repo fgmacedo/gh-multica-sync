@@ -26,10 +26,8 @@ func runBootstrap(ctx context.Context, e *Env, args []string) error {
 		return fmt.Errorf("the Multica configuration has no token: run 'multica setup self-host' first")
 	}
 
-	// Step 1: the two variables on the server. Writing to someone's .env and
-	// restarting their backend are different things: we do the first on
-	// explicit request, and never the second, because taking someone's backend
-	// down unannounced is the kind of surprise that burns trust in a tool.
+	// Step 1: the two variables on the server. Writing the .env happens on
+	// explicit request; restarting the backend never happens on our own.
 	if s.WebhookSecret == "" {
 		if !*writeEnv {
 			return fmt.Errorf(
@@ -61,10 +59,7 @@ func runBootstrap(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 
-	// Step 2: the installation, one per workspace. Reusing an id across
-	// workspaces would not just be untidy: Multica fans an event out to every
-	// workspace bound to that installation, so the boards would see each
-	// other's pull requests.
+	// Step 2: the installation, one per workspace (see config.Workspace).
 	m := bootstrap.NewMultica(s.ServerURL, s.Token)
 	resp, err := m.Installations(wsID)
 	if err != nil {
@@ -100,8 +95,7 @@ func runBootstrap(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 
-	// Trusting the 200 would be exactly the mistake this tool exists to avoid:
-	// we confirm by reading it back.
+	// The 200 is not the confirmation; reading the binding back is.
 	resp, err = m.Installations(wsID)
 	if err != nil {
 		return err

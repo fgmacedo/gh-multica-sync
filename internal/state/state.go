@@ -1,9 +1,9 @@
 // Package state records what we have already seen of each pull request, so a
 // poll only emits an event when something actually changed.
 //
-// Without it every cycle would resend every pull request. Multica would cope
-// (the upsert is idempotent), but the server log would turn to noise and the
-// network cost would scale with history instead of with change.
+// Without it every cycle would resend every pull request. Multica would cope,
+// since the upsert is idempotent, but the cost would scale with history
+// instead of with change.
 package state
 
 import (
@@ -25,9 +25,8 @@ type Entry struct {
 	Action   string           `json:"last_action"`
 }
 
-// Store is the whole file: entries keyed by owner/repo#number, plus an avatar
-// cache by login (a field `gh pr list` does not return, worth one extra call
-// the first time we see each author) and push marks left by the optional hook.
+// Store is the whole file: entries keyed by owner/repo#number, an avatar cache
+// by login, and push marks left by the optional hook.
 type Store struct {
 	Entries map[string]Entry     `json:"entries"`
 	Avatars map[string]string    `json:"avatars,omitempty"`
@@ -36,23 +35,19 @@ type Store struct {
 
 func Path() string { return filepath.Join(discover.StateDir(), "state.json") }
 
-// Key identifies a pull request within a workspace.
-//
-// The workspace is part of the key because the same pull request can be
-// mirrored into more than one board, each through its own installation. Keying
-// only by repository would make the second board miss every event the first one
-// already consumed.
+// Key identifies a pull request within a workspace. The workspace is part of
+// the key because the same pull request can be mirrored into more than one
+// board: keying only by repository would make the second board miss every event
+// the first one already consumed.
 func Key(workspaceID, owner, repo string, number int32) string {
 	return fmt.Sprintf("%s|%s/%s#%d", workspaceID, owner, repo, number)
 }
 
-// Load reads the state. A missing file yields an empty, usable Store, which is
-// the first-run case.
+// Load reads the state. A missing file yields an empty, usable Store.
 //
-// legacyWorkspace re-keys entries written before keys carried a workspace. It
-// matters because an unrecognized key looks like a pull request we have never
-// seen, and the next sweep would re-emit every one of them, including a closed
-// action for pull requests that merged long ago.
+// legacyWorkspace re-keys entries written before keys carried a workspace: an
+// unrecognized key looks like a pull request we have never seen, and the next
+// sweep would re-emit all of them, closing cards that merged long ago.
 func Load(legacyWorkspace string) (*Store, error) {
 	s := &Store{Entries: map[string]Entry{}, Avatars: map[string]string{}, Pushes: map[string]time.Time{}}
 	raw, err := os.ReadFile(Path())
@@ -86,9 +81,9 @@ func Load(legacyWorkspace string) (*Store, error) {
 	return s, nil
 }
 
-// Save writes the state atomically: to a temporary file in the same directory,
-// then rename. A poll interrupted mid-write would otherwise leave truncated
-// JSON, and the next cycle would re-emit everything as if it were new.
+// Save writes the state atomically. A poll interrupted mid-write would
+// otherwise leave truncated JSON, and the next cycle would re-emit everything
+// as if it were new.
 func (s *Store) Save() error {
 	dir := discover.StateDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -135,8 +130,8 @@ func (s *Store) Record(workspaceID string, snap payload.Snapshot, action string)
 	}
 }
 
-// MarkPush records that a push happened in a repository. The optional hook
-// writes this, and it is what makes the next poll look again sooner.
+// MarkPush records that a push happened in a repository. The optional pre-push
+// hook writes this, and it is what makes the next poll look again sooner.
 func (s *Store) MarkPush(repo string) { s.Pushes[repo] = time.Now().UTC() }
 
 // RecentPush reports whether a push is recent enough to justify a second look.

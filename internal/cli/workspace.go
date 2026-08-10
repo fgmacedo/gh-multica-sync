@@ -9,12 +9,9 @@ import (
 	"github.com/fgmacedo/gh-multica-sync/internal/config"
 )
 
-// resolveWorkspace turns a --workspace value (id, slug or prefix) into a
-// workspace UUID, falling back to the one the Multica CLI points at.
-//
-// Accepting slug and prefix matters because that is how the Multica CLI itself
-// lets you name a workspace, and a tool that only took UUIDs would make people
-// go look them up.
+// resolveWorkspace turns a --workspace value into a workspace UUID, falling
+// back to the one the Multica CLI points at. Slug and prefix are accepted
+// because that is how the Multica CLI itself lets you name a workspace.
 func (e *Env) resolveWorkspace(ctx context.Context, s config.Settings, want string) (string, error) {
 	want = strings.TrimSpace(want)
 	if want == "" {
@@ -49,8 +46,8 @@ func (e *Env) workspaces(ctx context.Context) ([]workspaceInfo, error) {
 	return bootstrap.NewMultica(s.ServerURL, s.Token).Workspaces()
 }
 
-// label renders a workspace for humans, preferring the prefix because that is
-// what shows up in issue keys.
+// label renders a workspace for humans, showing the prefix because that is what
+// shows up in issue keys.
 func label(list []workspaceInfo, id string) string {
 	for _, w := range list {
 		if w.ID == id {

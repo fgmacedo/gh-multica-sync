@@ -3,8 +3,8 @@
 //
 // The Multica CLI stores server_url, workspace_id and the token in
 // ~/.multica/config.json, and the server stores the webhook secret in the .env
-// of its install directory. Reusing those two sources is what keeps setup down
-// to a couple of commands.
+// of its install directory. Those two sources are what keeps setup down to a
+// couple of commands.
 package discover
 
 import (
@@ -57,8 +57,8 @@ func ServerDir() string {
 }
 
 // DotEnv reads a .env in docker compose format: one assignment per line,
-// comments with #, optional quotes around the value. It does not expand
-// variables: the goal is to read two keys, not to reimplement compose.
+// comments with #, optional quotes around the value. Variables are not
+// expanded: the goal is to read two keys, not to reimplement compose.
 func DotEnv(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -105,9 +105,9 @@ func home() string {
 	return h
 }
 
-// StateDir is where this tool keeps its config and state. It deliberately sits
-// outside the server directory: the Multica installer runs `git reset --hard`
-// there and would silently wipe anything of ours.
+// StateDir is where this tool keeps its config and state. It sits outside the
+// server directory because the Multica installer runs `git reset --hard` there
+// and would silently wipe anything of ours.
 func StateDir() string {
 	if v := strings.TrimSpace(os.Getenv("MULTICA_SYNC_HOME")); v != "" {
 		return v

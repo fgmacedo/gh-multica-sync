@@ -51,8 +51,7 @@ func TestDeriveAction(t *testing.T) {
 	}
 }
 
-// Closing wins over a new commit landing in the same interval: to the board,
-// the merge is the fact that matters.
+// Closing wins over a new commit landing in the same interval.
 func TestDeriveActionClosingBeatsSynchronize(t *testing.T) {
 	prev := snap("OPEN")
 	cur := snap("MERGED", func(s *Snapshot) { s.HeadSHA = "zzz" })

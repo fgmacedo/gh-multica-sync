@@ -2,11 +2,9 @@
 // step that makes Multica accept our events.
 //
 // Multica attributes a pull_request event to a workspace by installation.id and
-// silently drops anything it does not recognize. That installation normally
-// comes from the GitHub App flow; here it comes from the same callback that
-// flow uses, which accepts any numeric id as long as the state is signed by the
-// server itself. Nothing is forged on GitHub's side: this is your own instance
-// accepting to be configured by you.
+// silently drops anything it does not recognize. The id normally comes from the
+// GitHub App flow; here it comes from the same callback that flow uses, which
+// accepts any numeric id as long as the state is signed by the server itself.
 package bootstrap
 
 import (
@@ -30,8 +28,8 @@ func NewMultica(baseURL, token string) *Multica {
 	return &Multica{
 		BaseURL: strings.TrimSuffix(baseURL, "/"),
 		Token:   token,
-		// Redirects are not followed: the setup callback answers 302 and the
-		// outcome, success or failure, is in the Location header, not the body.
+		// Redirects are not followed: the setup callback answers 302 and its
+		// outcome, success or failure, is in the Location header.
 		HTTP: &http.Client{
 			Timeout:       20 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -65,11 +63,10 @@ type InstallationsResponse struct {
 	Installations []Installation `json:"installations"`
 }
 
-// Installations lists the installations bound to the workspace. `configured`
-// reflects whether GITHUB_APP_SLUG and GITHUB_WEBHOOK_SECRET are set on the
-// server, which makes this endpoint the most reliable check of both
-// prerequisites: it answers for the process that is running, not for a file on
-// disk that may not have been reloaded yet.
+// Installations lists the installations bound to the workspace. Its
+// `configured` field reports whether GITHUB_APP_SLUG and GITHUB_WEBHOOK_SECRET
+// are set on the server, and it answers for the process that is running, not
+// for a file on disk that may not have been reloaded yet.
 func (m *Multica) Installations(workspaceID string) (InstallationsResponse, error) {
 	var out InstallationsResponse
 	resp, err := m.do(http.MethodGet, "/api/workspaces/"+workspaceID+"/github/installations")
@@ -97,8 +94,8 @@ func (r InstallationsResponse) Bound(id int64) bool {
 }
 
 // connectState asks the server for the install URL and extracts the signed
-// state it carries. This is the only way to obtain a valid state without the
-// server's signing key, and it is why bootstrap needs a token.
+// state it carries: the only way to obtain a valid state without the server's
+// signing key, and why bootstrap needs a token.
 func (m *Multica) connectState(workspaceID string) (string, error) {
 	resp, err := m.do(http.MethodGet, "/api/workspaces/"+workspaceID+"/github/connect")
 	if err != nil {
@@ -168,11 +165,9 @@ type WorkspaceInfo struct {
 	IssuePrefix string `json:"issue_prefix"`
 }
 
-// Workspaces lists the workspaces the token can see.
-//
-// This comes from the API rather than from the multica CLI because the CLI's
-// list omits the issue prefix, and the prefix is what tells a sweep which pull
-// requests reference a card.
+// Workspaces lists the workspaces the token can see. It goes to the API rather
+// than to the multica CLI because the CLI's list omits the issue prefix, and
+// the prefix is what tells a sweep which pull requests reference a card.
 func (m *Multica) Workspaces() ([]WorkspaceInfo, error) {
 	resp, err := m.do(http.MethodGet, "/api/workspaces")
 	if err != nil {

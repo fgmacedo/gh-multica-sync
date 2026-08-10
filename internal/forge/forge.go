@@ -1,10 +1,9 @@
 // Package forge abstracts where pull requests come from.
 //
-// Today only GitHub exists, and the installation this tool fabricates is
-// specific to it. For GitLab, Gitea and Forgejo, Multica already ships a
-// native, token-based integration, so future support there would forward
-// rather than fabricate: same interface here, a different deliverer on the
-// other side. The seam exists so that difference fits without a rewrite.
+// Only GitHub exists today, and the installation this tool fabricates is
+// specific to it. Multica already ships a native token-based integration for
+// GitLab, Gitea and Forgejo, so support there would forward rather than
+// fabricate: same interface here, a different deliverer on the other side.
 package forge
 
 import (

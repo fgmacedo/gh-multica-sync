@@ -20,28 +20,24 @@ type check struct {
 }
 
 // runDoctor inspects every prerequisite and, for whatever is missing, prints
-// the command that fixes it. It changes nothing: safe to run at any time, and
-// the first thing to run when something stops working.
+// the command that fixes it. It changes nothing.
 func runDoctor(ctx context.Context, e *Env) error {
 	s := e.Settle()
 	checks := []check{}
 
-	// 1. gh authenticated. Without it there is no way to discover any pull
-	// request at all.
 	if err := ghcli.Authenticated(ctx, e.GH); err != nil {
 		checks = append(checks, check{"gh authenticated", false, err.Error(), "gh auth login"})
 	} else {
 		checks = append(checks, check{"gh authenticated", true, "", ""})
 	}
 
-	// 2. The Multica CLI config, where everything we do not ask for comes from.
+	// The Multica CLI config, where everything we do not ask for comes from.
 	if s.CLIErr != nil {
 		checks = append(checks, check{"multica config", false, s.CLIErr.Error(), "multica setup self-host"})
 	} else {
 		checks = append(checks, check{"multica config", true, s.ServerURL, ""})
 	}
 
-	// 3. Server reachable.
 	if s.ServerURL == "" {
 		checks = append(checks, check{"server responding", false, "no server_url", "multica setup self-host"})
 	} else if err := ping(s.ServerURL); err != nil {
@@ -51,8 +47,7 @@ func runDoctor(ctx context.Context, e *Env) error {
 		checks = append(checks, check{"server responding", true, s.ServerURL, ""})
 	}
 
-	// 4. Webhook secret. We need the value, not just to know it exists: it is
-	// what we sign with.
+	// The webhook secret has to be read, not just found: it is what we sign with.
 	switch {
 	case s.EnvErr != nil:
 		checks = append(checks, check{"webhook secret", false, s.EnvErr.Error(),
@@ -64,10 +59,8 @@ func runDoctor(ctx context.Context, e *Env) error {
 		checks = append(checks, check{"webhook secret", true, "read from " + s.EnvPath, ""})
 	}
 
-	// 5. Per workspace: is the integration live, is the installation bound, and
-	// are there repositories enabled. Checking against the running server is
-	// what matters, because it answers for the live process rather than for a
-	// file on disk that may have been edited without a restart.
+	// Per workspace, asked of the running server rather than of the config on
+	// disk: see Multica.Installations.
 	list, _ := e.workspaces(ctx)
 	if len(s.Workspaces) == 0 {
 		checks = append(checks, check{"workspaces configured", false, "none",

@@ -19,18 +19,15 @@ import (
 
 const launchAgentLabel = "ai.multica.prsync"
 
-// defaultInterval is how often the timer sweeps. Five minutes is short enough
-// that a card reflects a merge while you are still looking at it, and long
-// enough that the cost stays at one API call per enabled repository.
+// defaultInterval is how often the timer sweeps: short enough that a card
+// reflects a merge while you are still looking at it.
 const defaultInterval = 5 * time.Minute
 
-// minInterval is a floor rather than a preference. Below a minute the sweep
-// stops being cheap: every cycle spends one API call per enabled repository,
-// and GitHub's secondary rate limits react to sustained bursts. Use `sync` when
-// you need a result now.
+// minInterval is a floor, not a preference: every cycle spends one API call per
+// enabled repository, and GitHub's secondary rate limits react to sustained
+// bursts.
 const minInterval = time.Minute
 
-// validateInterval normalizes the configured interval.
 func validateInterval(d time.Duration) (int, error) {
 	if d < minInterval {
 		return 0, fmt.Errorf("interval %s is below the %s minimum; use 'gh multica-sync sync' when you need a result immediately", d, minInterval)
@@ -40,8 +37,8 @@ func validateInterval(d time.Duration) (int, error) {
 
 var startIntervalRe = regexp.MustCompile(`(?s)<key>StartInterval</key>\s*<integer>(\d+)</integer>`)
 
-// installedInterval reads the interval back from the installed plist, which is
-// the source of truth: storing a copy in our config would let the two drift.
+// installedInterval reads the interval back from the installed plist, the
+// source of truth: a copy in our config would drift from what is scheduled.
 func installedInterval() (time.Duration, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -131,8 +128,7 @@ func runInstallTimer(ctx context.Context, e *Env, args []string) error {
 	}
 
 	target := fmt.Sprintf("gui/%d/%s", os.Getuid(), launchAgentLabel)
-	// Unloading first is what makes this command repeatable: without it, a
-	// second run would fail with "service already loaded".
+	// Without unloading first, a second run fails with "service already loaded".
 	_ = exec.CommandContext(ctx, "launchctl", "bootout", target).Run()
 	out, err := exec.CommandContext(ctx, "launchctl", "bootstrap",
 		fmt.Sprintf("gui/%d", os.Getuid()), path).CombinedOutput()
@@ -209,8 +205,7 @@ func gitRoot(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// shellPath returns a usable login shell. zsh is the default on modern macOS;
-// bash covers the rest.
+// shellPath returns a usable login shell.
 func shellPath() string {
 	for _, c := range []string{"/bin/zsh", "/bin/bash"} {
 		if _, err := os.Stat(c); err == nil {
@@ -220,8 +215,8 @@ func shellPath() string {
 	return "/bin/sh"
 }
 
-// sprintPlist renders the LaunchAgent for a given interval. It exists so a test
-// can assert that the interval written and the interval read back agree.
+// sprintPlist renders the LaunchAgent for a given interval, so a test can
+// assert that the interval written and the one read back agree.
 func sprintPlist(seconds int) string {
 	return fmt.Sprintf(launchAgentPlist, launchAgentLabel, shellPath(), discover.StateDir(), seconds)
 }

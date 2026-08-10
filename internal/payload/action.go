@@ -2,8 +2,8 @@ package payload
 
 import "strings"
 
-// The pull_request webhook actions we emit. Not every action GitHub defines is
-// here: only the ones that change something on Multica's side.
+// The pull_request webhook actions we emit: only the ones that change something
+// on Multica's side, not every action GitHub defines.
 const (
 	ActionOpened           = "opened"
 	ActionClosed           = "closed"
@@ -16,18 +16,17 @@ const (
 
 // DeriveAction decides which action represents the difference between what we
 // already knew about a pull request (prev, nil the first time) and what the
-// forge reports now. It returns ok=false when nothing changed, and no event is
-// sent in that case: this is what keeps polling idempotent and cheap.
+// forge reports now. ok=false means nothing changed and no event is sent, which
+// is what keeps polling idempotent.
 //
-// Order matters. Closing and reopening come first because they carry the
-// transition the board cares about most: a pull request that was merged and
-// whose head also moved within the same interval is, to Multica, a closed pull
-// request rather than a synchronized one.
+// Order matters: closing and reopening come first, so a pull request that
+// merged and also moved its head within one interval reads as closed rather
+// than as synchronized.
 func DeriveAction(prev *Snapshot, cur Snapshot) (string, bool) {
 	if prev == nil {
-		// First time we see this pull request. Finding it already closed is
-		// common when the tool is enabled on a repository with history:
-		// emitting "opened" here would describe something that never happened.
+		// Enabling the tool on a repository with history is the common case,
+		// and "opened" for a pull request already closed would describe
+		// something that never happened.
 		if cur.Open() {
 			return ActionOpened, true
 		}
@@ -42,10 +41,8 @@ func DeriveAction(prev *Snapshot, cur Snapshot) (string, bool) {
 		return ActionReopened, true
 	}
 
-	// Merged without passing through closed within our observation window: the
-	// previous state was already non-open, but not merged. This still deserves
-	// an event, otherwise the card never receives the merge signal that drives
-	// auto-advance.
+	// Already non-open but not yet merged: without an event here the card never
+	// receives the merge signal that drives auto-advance.
 	if !prev.Merged() && cur.Merged() {
 		return ActionClosed, true
 	}

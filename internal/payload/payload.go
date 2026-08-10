@@ -1,11 +1,9 @@
 // Package payload builds the `pull_request` event body that Multica expects to
 // receive from a GitHub App.
 //
-// The fields here mirror `ghPullRequestPayload` and what
-// `mirrorPullRequestForWorkspace` actually reads
-// (server/internal/handler/github.go, read at tag v0.4.21). Fields Multica does
-// not read are left out on purpose: a smaller payload is easier to diff against
-// upstream when they change it.
+// The fields mirror what `mirrorPullRequestForWorkspace` actually reads
+// (server/internal/handler/github.go, read at tag v0.4.21); what Multica
+// ignores is left out.
 package payload
 
 import "strings"
@@ -41,8 +39,8 @@ type Ref struct {
 }
 
 // Changes only shows up on `edited`. Multica reads `changes.base.ref` to learn
-// whether the PR switched base and, with that, whether its mergeable state went
-// stale.
+// whether the pull request switched base, and with that whether its mergeable
+// state went stale.
 type Changes struct {
 	Base *struct {
 		Ref *struct {
@@ -71,8 +69,8 @@ type PullRequest struct {
 	ChangedFiles   int32  `json:"changed_files"`
 }
 
-// Snapshot is a normalized view of a pull request as the forge reports it. It
-// is what local state persists and what action derivation compares.
+// Snapshot is a normalized view of a pull request as the forge reports it: what
+// local state persists and what action derivation compares.
 type Snapshot struct {
 	Owner          string
 	Repo           string
@@ -103,8 +101,7 @@ func (s Snapshot) Merged() bool { return strings.EqualFold(s.State, "MERGED") }
 func (s Snapshot) Open() bool { return strings.EqualFold(s.State, "OPEN") }
 
 // webhookState maps the forge state onto the webhook vocabulary, which only
-// knows open and closed: a merged pull request is closed, with merged=true
-// alongside it.
+// knows open and closed: a merged pull request is closed, with merged=true.
 func (s Snapshot) webhookState() string {
 	if s.Open() {
 		return "open"
@@ -114,7 +111,7 @@ func (s Snapshot) webhookState() string {
 
 // mergeableState translates the forge's merge state hint into the webhook's
 // mergeable_state vocabulary. An unknown value maps to the empty string, which
-// makes Multica treat it as "not reported" instead of storing garbage.
+// Multica treats as "not reported" instead of storing garbage.
 func mergeableState(hint string) string {
 	switch strings.ToUpper(hint) {
 	case "CLEAN":

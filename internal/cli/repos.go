@@ -11,8 +11,8 @@ import (
 	"github.com/fgmacedo/gh-multica-sync/internal/state"
 )
 
-// repoFlags parses the shared --workspace flag and returns the remaining
-// positional arguments.
+// repoFlags parses the flags shared by enable and disable, returning the
+// workspace, the scope and the remaining positional arguments.
 func repoFlags(e *Env, name string, args []string) (string, string, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(e.Err)
@@ -50,8 +50,6 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 	w := f.Find(wsID)
-	// Caching the prefix here is what lets a sweep know what a card key looks
-	// like without asking the server every cycle.
 	if list, lerr := e.workspaces(ctx); lerr == nil {
 		for _, info := range list {
 			if info.ID == wsID {
@@ -147,8 +145,6 @@ func runStatus(ctx context.Context, e *Env) error {
 		}
 	}
 
-	// Inside a checkout, whether THIS repository is enabled is the thing the
-	// user came to find out.
 	if owner, repo, err := e.Forge.CurrentRepo(ctx); err == nil {
 		full := owner + "/" + repo
 		in := s.RepoWorkspaces(full)
@@ -173,8 +169,7 @@ func runStatus(ctx context.Context, e *Env) error {
 		slices.Sort(keys)
 		for _, k := range keys {
 			en := st.Entries[k]
-			// Keys carry the workspace UUID, which is noise on screen: show the
-			// workspace by name and the pull request by its usual form.
+			// The key carries the workspace UUID, noise on screen.
 			wsID, pr, _ := strings.Cut(k, "|")
 			fmt.Fprintf(e.Out, "  %-14s %-30s %-8s %s\n",
 				label(list, wsID), pr, strings.ToLower(en.Snapshot.State), en.SyncedAt.Format("2006-01-02 15:04"))
@@ -184,7 +179,7 @@ func runStatus(ctx context.Context, e *Env) error {
 }
 
 // workspaceLabel is the forgiving variant used in messages: it never fails, it
-// just falls back to the id.
+// falls back to the id.
 func (e *Env) workspaceLabel(ctx context.Context, id string) string {
 	list, err := e.workspaces(ctx)
 	if err != nil {

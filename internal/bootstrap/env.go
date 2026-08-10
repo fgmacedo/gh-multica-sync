@@ -10,11 +10,9 @@ import (
 	"strings"
 )
 
-// GenerateInstallationID draws a local installation id.
-//
-// Real GitHub ids are 8 or 9 digits today. Drawing in the high ten-digit range
-// puts a collision with a real installation out of reach and makes the id
-// recognizable at a glance when someone is debugging the database.
+// GenerateInstallationID draws a local installation id. Real GitHub ids are 8
+// or 9 digits today, so the high ten-digit range puts a collision out of reach
+// and makes a local id recognizable at a glance in the database.
 func GenerateInstallationID() (int64, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000_000))
 	if err != nil {
@@ -32,19 +30,16 @@ func GenerateSecret() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// DefaultAppSlug is the placeholder slug. It is only used to build the install
-// URL the connect endpoint returns, and we never visit that URL. No App by
-// this name exists, and none needs to.
+// DefaultAppSlug is a placeholder. It only feeds the install URL the connect
+// endpoint returns, which is never visited: no App by this name exists.
 const DefaultAppSlug = "multica-local"
 
 var assignRe = regexp.MustCompile(`(?m)^(\s*)([A-Z_][A-Z0-9_]*)=.*$`)
 
-// WriteEnvVars sets or replaces keys in a .env file, preserving everything
-// else. A key that is absent is appended.
-//
-// Editing someone else's .env calls for care: replacement is anchored at the
-// start of a line (so a comment mentioning the key is left alone) and the write
-// is atomic, so a failure halfway through cannot leave a truncated file.
+// WriteEnvVars sets or replaces keys in a .env file, appending what is absent
+// and preserving everything else. Replacement is anchored at the start of a
+// line, so a comment mentioning the key is left alone, and the write is atomic:
+// this is someone else's file, and a truncated .env stops their server.
 func WriteEnvVars(path string, vars map[string]string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {

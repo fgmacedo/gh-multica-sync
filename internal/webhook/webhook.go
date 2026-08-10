@@ -1,9 +1,9 @@
 // Package webhook signs and delivers events to Multica's webhook endpoint.
 //
 // Multica validates X-Hub-Signature-256 as an HMAC-SHA256 over the raw body,
-// keyed by GITHUB_WEBHOOK_SECRET. Since the signed bytes must be exactly the
-// bytes on the wire, the payload is serialized once and that same buffer is
-// used to sign and to send.
+// keyed by GITHUB_WEBHOOK_SECRET. The signed bytes must be exactly the bytes on
+// the wire, so the payload is serialized once and that same buffer is signed
+// and sent.
 package webhook
 
 import (
@@ -41,12 +41,10 @@ func Sign(secret string, body []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-// Send serializes, signs and delivers the event.
-//
-// One detail shapes the whole tool: the endpoint answers 200 even when it
-// drops the event because it does not recognize the installation. So this
-// function cannot be the last word on success, and callers must confirm the
-// precondition that makes dropping impossible. See cli.newSender.
+// Send serializes, signs and delivers the event. Its success is not the last
+// word: the endpoint answers 200 even when it drops the event for an
+// unrecognized installation, which callers rule out beforehand. See
+// cli.newSender.
 func (c *Client) Send(event string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -76,9 +74,9 @@ func (c *Client) Send(event string, payload any) error {
 	return nil
 }
 
-// deliveryID generates the delivery identifier. GitHub sends a UUID; Multica
-// does not interpret it, but a unique value per delivery keeps the server log
-// readable when several go out together.
+// deliveryID generates the delivery identifier. Multica does not interpret it,
+// but a unique value per delivery keeps the server log readable when several go
+// out together.
 func deliveryID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
