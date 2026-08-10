@@ -52,7 +52,7 @@ COMMANDS
   status                   Show settings and enabled repositories
   sync [owner/repo] [n]    Sync now (with no argument, the current repository)
   poll                     Sweep enabled repositories and emit what changed
-  install-timer            Install the LaunchAgent that polls every 5 minutes
+  install-timer [--interval 5m]  Install the LaunchAgent that sweeps periodically
   install-hook             Install a pre-push hook that speeds up polling here
   version                  Print the version
 
@@ -88,7 +88,7 @@ func Run(ctx context.Context, e *Env, args []string) int {
 	case "poll":
 		err = runPoll(ctx, e)
 	case "install-timer":
-		err = runInstallTimer(ctx, e)
+		err = runInstallTimer(ctx, e, args[1:])
 	case "install-hook":
 		err = runInstallHook(ctx, e)
 	case "mark-push":

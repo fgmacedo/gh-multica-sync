@@ -124,6 +124,11 @@ func runStatus(ctx context.Context, e *Env) error {
 
 	fmt.Fprintf(e.Out, "server:   %s\n", orDash(s.ServerURL))
 	fmt.Fprintf(e.Out, "config:   %s\n", s.ConfigPath)
+	if d, ok := installedInterval(); ok {
+		fmt.Fprintf(e.Out, "timer:    every %s\n", d)
+	} else {
+		fmt.Fprintln(e.Out, "timer:    not installed (gh multica-sync install-timer)")
+	}
 
 	if len(s.Workspaces) == 0 {
 		fmt.Fprintln(e.Out, "\nno workspace configured yet: gh multica-sync bootstrap")

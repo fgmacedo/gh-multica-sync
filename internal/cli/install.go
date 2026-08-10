@@ -2,18 +2,65 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fgmacedo/gh-multica-sync/internal/discover"
 	"github.com/fgmacedo/gh-multica-sync/internal/state"
 )
 
 const launchAgentLabel = "ai.multica.prsync"
+
+// defaultInterval is how often the timer sweeps. Five minutes is short enough
+// that a card reflects a merge while you are still looking at it, and long
+// enough that the cost stays at one API call per enabled repository.
+const defaultInterval = 5 * time.Minute
+
+// minInterval is a floor rather than a preference. Below a minute the sweep
+// stops being cheap: every cycle spends one API call per enabled repository,
+// and GitHub's secondary rate limits react to sustained bursts. Use `sync` when
+// you need a result now.
+const minInterval = time.Minute
+
+// validateInterval normalizes the configured interval.
+func validateInterval(d time.Duration) (int, error) {
+	if d < minInterval {
+		return 0, fmt.Errorf("interval %s is below the %s minimum; use 'gh multica-sync sync' when you need a result immediately", d, minInterval)
+	}
+	return int(d.Seconds()), nil
+}
+
+var startIntervalRe = regexp.MustCompile(`(?s)<key>StartInterval</key>\s*<integer>(\d+)</integer>`)
+
+// installedInterval reads the interval back from the installed plist, which is
+// the source of truth: storing a copy in our config would let the two drift.
+func installedInterval() (time.Duration, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, false
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist"))
+	if err != nil {
+		return 0, false
+	}
+	m := startIntervalRe.FindSubmatch(raw)
+	if m == nil {
+		return 0, false
+	}
+	secs, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		return 0, false
+	}
+	return time.Duration(secs) * time.Second, true
+}
 
 const launchAgentPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -34,7 +81,7 @@ const launchAgentPlist = `<?xml version="1.0" encoding="UTF-8"?>
     </array>
 
     <key>StartInterval</key>
-    <integer>300</integer>
+    <integer>%[4]d</integer>
 
     <key>StandardOutPath</key>
     <string>%[3]s/poll.out.log</string>
@@ -44,12 +91,25 @@ const launchAgentPlist = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `
 
-func runInstallTimer(ctx context.Context, e *Env) error {
+func runInstallTimer(ctx context.Context, e *Env, args []string) error {
+	fs := flag.NewFlagSet("install-timer", flag.ContinueOnError)
+	fs.SetOutput(e.Err)
+	interval := fs.Duration("interval", defaultInterval,
+		"how often to sweep, as a duration such as 5m, 90s or 1h")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	seconds, err := validateInterval(*interval)
+	if err != nil {
+		return err
+	}
+
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf(
 			"automatic timer installation only exists on macOS.\n"+
-				"  On Linux, schedule `gh multica-sync poll` every 5 minutes with a systemd timer or cron:\n"+
-				"    */5 * * * * %s -lc 'gh multica-sync poll'", shellPath())
+				"  On Linux, schedule `gh multica-sync poll` every %s with a systemd timer or cron:\n"+
+				"    */%d * * * * %s -lc 'gh multica-sync poll'",
+			*interval, int(interval.Minutes()), shellPath())
 	}
 
 	dir := discover.StateDir()
@@ -65,7 +125,7 @@ func runInstallTimer(ctx context.Context, e *Env) error {
 		return err
 	}
 
-	content := fmt.Sprintf(launchAgentPlist, launchAgentLabel, shellPath(), dir)
+	content := fmt.Sprintf(launchAgentPlist, launchAgentLabel, shellPath(), dir, seconds)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return err
 	}
@@ -81,7 +141,7 @@ func runInstallTimer(ctx context.Context, e *Env) error {
 	}
 
 	fmt.Fprintf(e.Out, "Timer installed: %s\n", path)
-	fmt.Fprintf(e.Out, "Runs 'gh multica-sync poll' every 5 minutes. Logs in %s.\n", dir)
+	fmt.Fprintf(e.Out, "Runs 'gh multica-sync poll' every %s. Logs in %s.\n", *interval, dir)
 	fmt.Fprintf(e.Out, "To remove: launchctl bootout %s && rm %s\n", target, path)
 	return nil
 }
@@ -158,4 +218,10 @@ func shellPath() string {
 		}
 	}
 	return "/bin/sh"
+}
+
+// sprintPlist renders the LaunchAgent for a given interval. It exists so a test
+// can assert that the interval written and the interval read back agree.
+func sprintPlist(seconds int) string {
+	return fmt.Sprintf(launchAgentPlist, launchAgentLabel, shellPath(), discover.StateDir(), seconds)
 }

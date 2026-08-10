@@ -41,7 +41,9 @@ This question comes up every time, and the answer explains the design:
 - **Intercepting `gh` is not reliable.** An agent may use `gh pr create`, `gh api`, `curl`, or simply push and leave the pull request for you to open in the browser.
 - **Merging does not happen on your machine.** It comes from the browser, later, and it is what closes the card. No local trigger can see it.
 
-The sweep observes the **result** (the pull request exists, the pull request changed state), not the method. It costs one `gh pr list` per enabled repository every five minutes, and exits in milliseconds when nothing is enabled.
+The sweep observes the **result** (the pull request exists, the pull request changed state), not the method. It costs one `gh pr list` per enabled repository per cycle, and exits in milliseconds when nothing is enabled.
+
+The interval defaults to five minutes and is set with `install-timer --interval`, taking any Go duration (`90s`, `15m`, `1h`). One minute is the floor: below that the sweep stops being cheap, since every cycle spends an API call per enabled repository and GitHub's secondary limits react to sustained bursts. Run `sync` when you need a result now. `status` reports the interval by reading it back from the installed timer, so what it shows is what is actually scheduled.
 
 There is an optional `install-hook` that adds a `pre-push` to **speed up** the sweep after a push. It detects no pull requests, and nothing depends on it.
 
@@ -61,7 +63,7 @@ gh multica-sync bootstrap --write-env   # set both variables in the server's .en
 # restart the backend, as the command tells you
 gh multica-sync bootstrap               # bind the installation
 cd my-project && gh multica-sync enable
-gh multica-sync install-timer           # sweep every 5 minutes
+gh multica-sync install-timer           # sweep every 5 minutes (--interval 15m to change)
 ```
 
 ### Several workspaces
@@ -96,7 +98,7 @@ Almost nothing has to be asked because the Multica CLI already stores `server_ur
 | `status` | Settings, enabled repositories and mirrored pull requests |
 | `sync [owner/repo] [n]` | Sync now, without waiting for the timer |
 | `poll` | Sweep the enabled repositories and emit what changed |
-| `install-timer` | LaunchAgent running every 5 minutes (macOS) |
+| `install-timer [--interval 5m]` | LaunchAgent that sweeps periodically (macOS) |
 | `install-hook` | Optional `pre-push` that speeds up the sweep |
 
 ## What gets mirrored
