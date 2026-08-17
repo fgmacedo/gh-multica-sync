@@ -15,11 +15,14 @@ var issueKeyRe sync.Map
 // Multica scans, so this filter matches what the server would link.
 //
 // Multica shows pull requests inside cards, so mirroring one with no linked
-// issue produces a row nobody can see. An empty prefix disables the filter.
+// issue produces a row nobody can see. With no prefix nothing can reference a
+// card, which is why an empty one mirrors nothing rather than everything: the
+// caller that could not resolve a prefix has no idea what a card key looks like,
+// and a sweep that guesses floods the board with pull requests nobody linked.
 func MentionsIssue(s Snapshot, prefix string) bool {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
-		return true
+		return false
 	}
 	re, err := issueKeyPattern(prefix)
 	if err != nil {

@@ -24,7 +24,10 @@ func TestMentionsIssue(t *testing.T) {
 		{"longer word ending in the prefix", "JUS", Snapshot{Title: "BONJUS-1 unrelated"}, false},
 		{"key is not a prefix of a longer key", "MAC", Snapshot{Title: "MAC-123 something"}, true},
 
-		{"empty prefix disables the filter", "", Snapshot{Title: "anything"}, true},
+		// Nothing can reference a card without a prefix, and a sweep that
+		// mirrored everything here would fill the board with unlinked rows.
+		{"empty prefix mirrors nothing", "", Snapshot{Title: "anything"}, false},
+		{"empty prefix mirrors nothing, even a key-shaped title", "", Snapshot{Title: "MAC-12 work"}, false},
 	}
 
 	for _, c := range cases {

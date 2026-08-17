@@ -28,6 +28,7 @@ type target struct {
 	owner, repo string
 	ws          config.Workspace
 	cfg         config.Repo
+	prefix      string
 }
 
 func authorFor(r config.Repo) string {
@@ -55,6 +56,10 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 	if len(workspaces) == 0 {
 		return fmt.Errorf("%s is not enabled in any workspace: run 'gh multica-sync enable'", full)
 	}
+	prefixes, err := e.prefixes(ctx)
+	if err != nil {
+		return err
+	}
 
 	st, err := state.Load(s.CurrentWorkspaceID)
 	if err != nil {
@@ -72,6 +77,11 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 
 	sent := 0
 	for _, ws := range workspaces {
+		prefix := prefixes[ws.WorkspaceID]
+		if prefix == "" {
+			return fmt.Errorf("workspace %s has no issue prefix: no pull request can reference a card",
+				short(ws.WorkspaceID))
+		}
 		sender, serr := e.newSender(s, ws)
 		if serr != nil {
 			return serr
@@ -88,7 +98,7 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		} else if snaps, err = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); err != nil {
 			return err
 		}
-		n, eerr := e.emit(ctx, ws, sender, st, snaps)
+		n, eerr := e.emit(ctx, ws, prefix, sender, st, snaps)
 		sent += n
 		if eerr != nil {
 			return eerr
@@ -107,29 +117,65 @@ func runPoll(ctx context.Context, e *Env) error {
 	if s.EnabledRepos() == 0 {
 		return nil
 	}
-	st, err := state.Load(s.CurrentWorkspaceID)
+	prefixes, err := e.prefixes(ctx)
 	if err != nil {
 		return err
 	}
-
-	var targets []target
-	for _, ws := range s.Workspaces {
-		for _, r := range ws.Repos {
-			owner, repo, perr := github.ParseRepo(r.Name)
-			if perr != nil {
-				fmt.Fprintf(e.Err, "warning: %v\n", perr)
-				continue
-			}
-			targets = append(targets, target{owner: owner, repo: repo, ws: ws, cfg: r})
-		}
+	st, err := state.Load(s.CurrentWorkspaceID)
+	if err != nil {
+		return err
 	}
 
 	total := 0
 	var firstErr error
 	var retry []target
 
+	var targets []target
+	for _, ws := range s.Workspaces {
+		prefix := prefixes[ws.WorkspaceID]
+		if prefix == "" {
+			// Every pull request would be skipped anyway, and doing it quietly
+			// is what made the last prefix problem take two days to surface.
+			err := fmt.Errorf("workspace %s has no issue prefix: no pull request can reference a card",
+				short(ws.WorkspaceID))
+			fmt.Fprintf(e.Err, "warning: %v\n", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, r := range ws.Repos {
+			owner, repo, perr := github.ParseRepo(r.Name)
+			if perr != nil {
+				fmt.Fprintf(e.Err, "warning: %v\n", perr)
+				continue
+			}
+			targets = append(targets, target{owner: owner, repo: repo, ws: ws, cfg: r, prefix: prefix})
+		}
+	}
+
+	// One sender per workspace, not per repository: building it confirms the
+	// installation binding against the server, and repeating that call once per
+	// enabled repository asks the same question several times per cycle.
+	//
+	// Only success is remembered. A failure is usually a server that is down for
+	// a moment, and the burst retry forty-five seconds later exists precisely to
+	// catch it back up.
+	senders := map[string]*webhook.Client{}
+	senderFor := func(ws config.Workspace) (*webhook.Client, error) {
+		if c, ok := senders[ws.WorkspaceID]; ok {
+			return c, nil
+		}
+		c, err := e.newSender(s, ws)
+		if err != nil {
+			return nil, err
+		}
+		senders[ws.WorkspaceID] = c
+		return c, nil
+	}
+
 	sweep := func(t target) int {
-		sender, serr := e.newSender(s, t.ws)
+		sender, serr := senderFor(t.ws)
 		if serr != nil {
 			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, serr)
 			if firstErr == nil {
@@ -147,7 +193,7 @@ func runPoll(ctx context.Context, e *Env) error {
 			}
 			return 0
 		}
-		n, eerr := e.emit(ctx, t.ws, sender, st, snaps)
+		n, eerr := e.emit(ctx, t.ws, t.prefix, sender, st, snaps)
 		if eerr != nil {
 			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, eerr)
 			if firstErr == nil {
@@ -188,10 +234,10 @@ func runPoll(ctx context.Context, e *Env) error {
 
 // emit compares each snapshot against what we already knew and sends only what
 // changed.
-func (e *Env) emit(ctx context.Context, ws config.Workspace, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
+func (e *Env) emit(ctx context.Context, ws config.Workspace, prefix string, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
 	sent := 0
 	for _, snap := range snaps {
-		if !payload.MentionsIssue(snap, ws.IssuePrefix) {
+		if !payload.MentionsIssue(snap, prefix) {
 			continue
 		}
 		action, changed := payload.DeriveAction(st.Previous(ws.WorkspaceID, snap), snap)

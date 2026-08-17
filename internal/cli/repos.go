@@ -50,12 +50,9 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 	w := f.Find(wsID)
+	prefix := ""
 	if list, lerr := e.workspaces(ctx); lerr == nil {
-		for _, info := range list {
-			if info.ID == wsID {
-				w.IssuePrefix = info.IssuePrefix
-			}
-		}
+		prefix = serverPrefix(list, wsID)
 	}
 	if existing, ok := w.Repo(full); ok && existing.Scope == scope {
 		fmt.Fprintf(e.Out, "%s was already enabled in this workspace.\n", full)
@@ -72,8 +69,8 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 		scopeNote = "every recent pull request"
 	}
 	fmt.Fprintf(e.Out, "%s enabled in workspace %s (%s).\n", full, e.workspaceLabel(ctx, wsID), scopeNote)
-	if w.IssuePrefix != "" {
-		fmt.Fprintf(e.Out, "Only pull requests referencing %s-<n> are mirrored.\n", w.IssuePrefix)
+	if prefix != "" {
+		fmt.Fprintf(e.Out, "Only pull requests referencing %s-<n> are mirrored.\n", prefix)
 	}
 	if w.InstallationID == 0 {
 		fmt.Fprintf(e.Out, "This workspace has no installation yet: gh multica-sync bootstrap --workspace %s\n", wsID)
@@ -138,7 +135,7 @@ func runStatus(ctx context.Context, e *Env) error {
 			fmt.Fprintln(e.Out, "  repositories: none")
 			continue
 		}
-		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(w.IssuePrefix))
+		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(serverPrefix(list, w.WorkspaceID)))
 		fmt.Fprintln(e.Out, "  repositories:")
 		for _, r := range w.Repos {
 			fmt.Fprintf(e.Out, "    %-42s scope: %s\n", r.Name, r.EffectiveScope())

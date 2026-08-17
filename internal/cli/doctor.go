@@ -91,7 +91,16 @@ func runDoctor(ctx context.Context, e *Env) error {
 				"gh multica-sync bootstrap --workspace " + w.WorkspaceID})
 			continue
 		}
-		info := fmt.Sprintf("installation %d, %s", w.InstallationID, reposLabel(w.Repos))
+		// Without a prefix a sweep cannot tell which pull requests reference a
+		// card, so it refuses to run rather than mirror every one of them.
+		prefix := serverPrefix(list, w.WorkspaceID)
+		if prefix == "" {
+			checks = append(checks, check{"workspace " + name, false,
+				"no issue prefix: no pull request can reference a card",
+				"set an issue prefix for this workspace in Multica"})
+			continue
+		}
+		info := fmt.Sprintf("installation %d, %s-<n>, %s", w.InstallationID, prefix, reposLabel(w.Repos))
 		checks = append(checks, check{"workspace " + name, true, info, ""})
 	}
 

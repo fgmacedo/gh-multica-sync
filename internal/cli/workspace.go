@@ -46,6 +46,37 @@ func (e *Env) workspaces(ctx context.Context) ([]workspaceInfo, error) {
 	return bootstrap.NewMultica(s.ServerURL, s.Token).Workspaces()
 }
 
+// serverPrefix is the issue prefix the server reports for a workspace, empty
+// when the list does not carry it.
+func serverPrefix(list []workspaceInfo, id string) string {
+	for _, w := range list {
+		if w.ID == id {
+			return w.IssuePrefix
+		}
+	}
+	return ""
+}
+
+// prefixes maps every workspace the token can see to its issue prefix.
+//
+// A sweep needs this before it can tell which pull requests reference a card,
+// and the server is the only place the answer is current: the prefix is renamed
+// with a click in Multica, and a copy kept here went stale once and filtered
+// every pull request out with no output at all, which reads exactly like a
+// repository where nothing changed. Failing to read it stops the sweep, because
+// the alternative is guessing at what a card key looks like.
+func (e *Env) prefixes(ctx context.Context) (map[string]string, error) {
+	list, err := e.workspaces(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolving issue prefixes: %w", err)
+	}
+	out := make(map[string]string, len(list))
+	for _, w := range list {
+		out[w.ID] = w.IssuePrefix
+	}
+	return out, nil
+}
+
 // label renders a workspace for humans, showing the prefix because that is what
 // shows up in issue keys.
 func label(list []workspaceInfo, id string) string {
