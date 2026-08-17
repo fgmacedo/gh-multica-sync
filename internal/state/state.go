@@ -25,12 +25,9 @@ type Entry struct {
 	Action   string           `json:"last_action"`
 }
 
-// Sweep is what the last pass over a repository saw.
-//
-// Skipped is the count that has no other witness: a pull request with no card
-// reference is dropped without a line of output, so a repository being examined
-// and fully discarded looks exactly like a repository where nothing changed.
-// That is how a stale issue prefix stayed invisible for two days.
+// Sweep is what the last pass over a repository saw. Skipped is the count with
+// no other witness: a pull request with no card reference is dropped without a
+// line of output.
 type Sweep struct {
 	Examined int       `json:"examined"`
 	Skipped  int       `json:"skipped"`
@@ -54,7 +51,22 @@ func Path() string { return filepath.Join(discover.StateDir(), "state.json") }
 // board: keying only by repository would make the second board miss every event
 // the first one already consumed.
 func Key(workspaceID, owner, repo string, number int32) string {
-	return fmt.Sprintf("%s|%s/%s#%d", workspaceID, owner, repo, number)
+	return scoped(workspaceID, fmt.Sprintf("%s/%s#%d", owner, repo, number))
+}
+
+// scoped prefixes anything stored per workspace. Case is preserved: these keys
+// are matched against a file written by earlier versions, and normalizing now
+// would make every known pull request look new and re-emit its whole history.
+func scoped(workspaceID, suffix string) string {
+	return workspaceID + "|" + suffix
+}
+
+// sweepKey scopes a repository, lowercased because that is how the config
+// matches one (config.Workspace.Repo uses EqualFold): "Owner/Repo" typed on the
+// command line and "owner/repo" in the config are the same repository, and a
+// sweep recorded under one would never be found under the other.
+func sweepKey(workspaceID, repo string) string {
+	return scoped(workspaceID, strings.ToLower(repo))
 }
 
 // Load reads the state. A missing file yields an empty, usable Store.
@@ -152,15 +164,15 @@ func (s *Store) Record(workspaceID string, snap payload.Snapshot, action string)
 	}
 }
 
-// RecordSweep stores what the pass over a repository saw, keyed like the
-// entries so two boards watching the same repository each keep their own count.
+// RecordSweep stores what the pass over a repository saw, scoped to a workspace
+// so two boards watching the same repository each keep their own count.
 func (s *Store) RecordSweep(workspaceID, repo string, examined, skipped int) {
-	s.Sweeps[workspaceID+"|"+repo] = Sweep{Examined: examined, Skipped: skipped, At: time.Now().UTC()}
+	s.Sweeps[sweepKey(workspaceID, repo)] = Sweep{Examined: examined, Skipped: skipped, At: time.Now().UTC()}
 }
 
 // LastSweep returns the last pass over a repository, if there was one.
 func (s *Store) LastSweep(workspaceID, repo string) (Sweep, bool) {
-	sw, ok := s.Sweeps[workspaceID+"|"+repo]
+	sw, ok := s.Sweeps[sweepKey(workspaceID, repo)]
 	return sw, ok
 }
 

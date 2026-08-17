@@ -23,9 +23,12 @@ import (
 // Each workspace gets its own installation id: Multica fans every event out to
 // all workspaces bound to an installation, so a shared id would mirror personal
 // pull requests into a work board and vice versa.
-// The issue prefix is deliberately absent: the server owns it, renaming it
-// there is a click, and a copy here went stale once and filtered every pull
-// request out in silence. A sweep asks for it, and cannot run without it.
+//
+// The issue prefix is deliberately absent. The server owns it, renaming it
+// there is a click, and the copy that used to live here went stale once: the
+// sweep went on matching a key nobody used and filtered every pull request out
+// with no output at all, which reads as a repository where nothing changed. A
+// sweep now asks the server, and refuses to run without an answer.
 type Workspace struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID int64  `json:"installation_id"`

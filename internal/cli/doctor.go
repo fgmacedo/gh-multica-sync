@@ -61,7 +61,12 @@ func runDoctor(ctx context.Context, e *Env) error {
 
 	// Per workspace, asked of the running server rather than of the config on
 	// disk: see Multica.Installations.
-	list, _ := e.workspaces(ctx)
+	list, listErr := e.workspaces(ctx)
+	if listErr != nil && s.ServerURL != "" && s.Token != "" {
+		// Without the list there is no prefix, and reporting that as "no issue
+		// prefix" would send you to Multica to set one that is already there.
+		checks = append(checks, check{"workspace list", false, listErr.Error(), ""})
+	}
 	if len(s.Workspaces) == 0 {
 		checks = append(checks, check{"workspaces configured", false, "none",
 			"gh multica-sync bootstrap"})
@@ -91,12 +96,9 @@ func runDoctor(ctx context.Context, e *Env) error {
 				"gh multica-sync bootstrap --workspace " + w.WorkspaceID})
 			continue
 		}
-		// Without a prefix a sweep cannot tell which pull requests reference a
-		// card, so it refuses to run rather than mirror every one of them.
 		prefix := serverPrefix(list, w.WorkspaceID)
-		if prefix == "" {
-			checks = append(checks, check{"workspace " + name, false,
-				"no issue prefix: no pull request can reference a card",
+		if prefix == "" && listErr == nil {
+			checks = append(checks, check{"workspace " + name, false, errNoPrefix.Error(),
 				"set an issue prefix for this workspace in Multica"})
 			continue
 		}

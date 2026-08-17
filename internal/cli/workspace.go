@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/fgmacedo/gh-multica-sync/internal/bootstrap"
 	"github.com/fgmacedo/gh-multica-sync/internal/config"
+	"github.com/fgmacedo/gh-multica-sync/internal/webhook"
 )
 
 // resolveWorkspace turns a --workspace value into a workspace UUID, falling
@@ -46,8 +48,12 @@ func (e *Env) workspaces(ctx context.Context) ([]workspaceInfo, error) {
 	return bootstrap.NewMultica(s.ServerURL, s.Token).Workspaces()
 }
 
+// errNoPrefix is what every command says when the server reports no prefix for
+// a workspace: nothing can reference a card, so a sweep would discard all of it.
+var errNoPrefix = errors.New("no issue prefix: no pull request can reference a card")
+
 // serverPrefix is the issue prefix the server reports for a workspace, empty
-// when the list does not carry it.
+// when the server does not report one, which is what makes a sweep refuse.
 func serverPrefix(list []workspaceInfo, id string) string {
 	for _, w := range list {
 		if w.ID == id {
@@ -57,24 +63,12 @@ func serverPrefix(list []workspaceInfo, id string) string {
 	return ""
 }
 
-// prefixes maps every workspace the token can see to its issue prefix.
-//
-// A sweep needs this before it can tell which pull requests reference a card,
-// and the server is the only place the answer is current: the prefix is renamed
-// with a click in Multica, and a copy kept here went stale once and filtered
-// every pull request out with no output at all, which reads exactly like a
-// repository where nothing changed. Failing to read it stops the sweep, because
-// the alternative is guessing at what a card key looks like.
-func (e *Env) prefixes(ctx context.Context) (map[string]string, error) {
-	list, err := e.workspaces(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("resolving issue prefixes: %w", err)
+// ready reports what a sweep of this workspace needs, or why it cannot run.
+func (e *Env) ready(s config.Settings, ws config.Workspace, prefix string) (*webhook.Client, error) {
+	if prefix == "" {
+		return nil, fmt.Errorf("workspace %s: %w", short(ws.WorkspaceID), errNoPrefix)
 	}
-	out := make(map[string]string, len(list))
-	for _, w := range list {
-		out[w.ID] = w.IssuePrefix
-	}
-	return out, nil
+	return e.newSender(s, ws)
 }
 
 // label renders a workspace for humans, showing the prefix because that is what

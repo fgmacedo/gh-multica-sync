@@ -26,9 +26,11 @@ const burstWindow = 3 * time.Minute
 // repository may be enabled in more than one board.
 type target struct {
 	owner, repo string
+	full        string // owner/repo as the config spells it
 	ws          config.Workspace
 	cfg         config.Repo
 	prefix      string
+	sender      *webhook.Client
 }
 
 func authorFor(r config.Repo) string {
@@ -56,9 +58,9 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 	if len(workspaces) == 0 {
 		return fmt.Errorf("%s is not enabled in any workspace: run 'gh multica-sync enable'", full)
 	}
-	prefixes, err := e.prefixes(ctx)
+	list, err := e.workspaces(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving issue prefixes: %w", err)
 	}
 
 	st, err := state.Load(s.CurrentWorkspaceID)
@@ -76,13 +78,10 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 	}
 
 	syncOne := func(ws config.Workspace) (int, error) {
-		prefix := prefixes[ws.WorkspaceID]
-		if prefix == "" {
-			return 0, fmt.Errorf("no issue prefix: no pull request can reference a card")
-		}
-		sender, serr := e.newSender(s, ws)
-		if serr != nil {
-			return 0, serr
+		prefix := serverPrefix(list, ws.WorkspaceID)
+		sender, rerr := e.ready(s, ws, prefix)
+		if rerr != nil {
+			return 0, rerr
 		}
 		rcfg, _ := ws.Repo(full)
 		var snaps []payload.Snapshot
@@ -130,9 +129,9 @@ func runPoll(ctx context.Context, e *Env) error {
 	if s.EnabledRepos() == 0 {
 		return nil
 	}
-	prefixes, err := e.prefixes(ctx)
+	list, err := e.workspaces(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving issue prefixes: %w", err)
 	}
 	st, err := state.Load(s.CurrentWorkspaceID)
 	if err != nil {
@@ -143,17 +142,18 @@ func runPoll(ctx context.Context, e *Env) error {
 	var firstErr error
 	var retry []target
 
+	// Prefix and sender are decided once per workspace, and both are why a
+	// workspace can be swept at all: building the sender confirms the
+	// installation binding, which is a question worth asking once a cycle
+	// rather than once per enabled repository.
 	var targets []target
 	for _, ws := range s.Workspaces {
-		prefix := prefixes[ws.WorkspaceID]
-		if prefix == "" {
-			// Every pull request would be skipped anyway, and doing it quietly
-			// is what made the last prefix problem take two days to surface.
-			err := fmt.Errorf("workspace %s has no issue prefix: no pull request can reference a card",
-				short(ws.WorkspaceID))
-			fmt.Fprintf(e.Err, "warning: %v\n", err)
+		prefix := serverPrefix(list, ws.WorkspaceID)
+		sender, werr := e.ready(s, ws, prefix)
+		if werr != nil {
+			fmt.Fprintf(e.Err, "warning: %v\n", werr)
 			if firstErr == nil {
-				firstErr = err
+				firstErr = werr
 			}
 			continue
 		}
@@ -163,52 +163,27 @@ func runPoll(ctx context.Context, e *Env) error {
 				fmt.Fprintf(e.Err, "warning: %v\n", perr)
 				continue
 			}
-			targets = append(targets, target{owner: owner, repo: repo, ws: ws, cfg: r, prefix: prefix})
+			targets = append(targets, target{
+				owner: owner, repo: repo, full: r.Name,
+				ws: ws, cfg: r, prefix: prefix, sender: sender,
+			})
 		}
-	}
-
-	// One sender per workspace, not per repository: building it confirms the
-	// installation binding against the server, and repeating that call once per
-	// enabled repository asks the same question several times per cycle.
-	//
-	// Only success is remembered. A failure is usually a server that is down for
-	// a moment, and the burst retry forty-five seconds later exists precisely to
-	// catch it back up.
-	senders := map[string]*webhook.Client{}
-	senderFor := func(ws config.Workspace) (*webhook.Client, error) {
-		if c, ok := senders[ws.WorkspaceID]; ok {
-			return c, nil
-		}
-		c, err := e.newSender(s, ws)
-		if err != nil {
-			return nil, err
-		}
-		senders[ws.WorkspaceID] = c
-		return c, nil
 	}
 
 	sweep := func(t target) int {
-		sender, serr := senderFor(t.ws)
-		if serr != nil {
-			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, serr)
-			if firstErr == nil {
-				firstErr = serr
-			}
-			return 0
-		}
 		snaps, lerr := e.Forge.ListPullRequests(ctx, t.owner, t.repo, listLimit, authorFor(t.cfg))
 		if lerr != nil {
 			// The timer runs unattended, so one unreachable repository must not
 			// cost the others their transitions.
-			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, lerr)
+			fmt.Fprintf(e.Err, "warning: %s: %v\n", t.full, lerr)
 			if firstErr == nil {
 				firstErr = lerr
 			}
 			return 0
 		}
-		n, eerr := e.emit(ctx, t.ws, t.owner+"/"+t.repo, t.prefix, sender, st, snaps)
+		n, eerr := e.emit(ctx, t.ws, t.full, t.prefix, t.sender, st, snaps)
 		if eerr != nil {
-			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, eerr)
+			fmt.Fprintf(e.Err, "warning: %s: %v\n", t.full, eerr)
 			if firstErr == nil {
 				firstErr = eerr
 			}
@@ -221,7 +196,7 @@ func runPoll(ctx context.Context, e *Env) error {
 		total += n
 		// A recent push with nothing new yet: the pull request may be opening
 		// right now, and the next cycle is five minutes away.
-		if n == 0 && st.RecentPush(t.owner+"/"+t.repo, burstWindow) {
+		if n == 0 && st.RecentPush(t.full, burstWindow) {
 			retry = append(retry, t)
 		}
 	}
@@ -233,7 +208,7 @@ func runPoll(ctx context.Context, e *Env) error {
 		case <-time.After(45 * time.Second):
 		}
 		total += sweep(t)
-		delete(st.Pushes, t.owner+"/"+t.repo)
+		delete(st.Pushes, t.full)
 	}
 
 	if err := st.Save(); err != nil {
@@ -248,11 +223,12 @@ func runPoll(ctx context.Context, e *Env) error {
 // emit compares each snapshot against what we already knew and sends only what
 // changed.
 func (e *Env) emit(ctx context.Context, ws config.Workspace, repo, prefix string, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
-	sent, skipped := 0, 0
-	// Recorded even when a send fails midway, so status reflects the pass that
-	// actually happened.
-	defer func() { st.RecordSweep(ws.WorkspaceID, repo, len(snaps), skipped) }()
+	sent, examined, skipped := 0, 0, 0
+	// Counted as we go, not from len(snaps): a send that fails midway leaves the
+	// rest of the list unexamined.
+	defer func() { st.RecordSweep(ws.WorkspaceID, repo, examined, skipped) }()
 	for _, snap := range snaps {
+		examined++
 		if !payload.MentionsIssue(snap, prefix) {
 			skipped++
 			continue

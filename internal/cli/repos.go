@@ -161,8 +161,7 @@ func runStatus(ctx context.Context, e *Env) error {
 		}
 	}
 
-	st, err := state.Load(s.CurrentWorkspaceID)
-	if err == nil && len(st.Entries) > 0 {
+	if stErr == nil && len(st.Entries) > 0 {
 		fmt.Fprintf(e.Out, "\n%d mirrored pull request(s):\n", len(st.Entries))
 		keys := make([]string, 0, len(st.Entries))
 		for k := range st.Entries {
@@ -190,10 +189,9 @@ func (e *Env) workspaceLabel(ctx context.Context, id string) string {
 	return label(list, id)
 }
 
-// sweepLine reports what the last pass over a repository saw, and says so
-// loudest when everything was discarded. A sweep that examines pull requests
-// and keeps none prints nothing while it runs, which is indistinguishable from
-// a quiet repository: that is how a wrong issue prefix hides.
+// sweepLine reports what the last pass over a repository saw. A total discard
+// gets its own phrasing: it prints nothing while it runs, so it is otherwise
+// indistinguishable from a quiet repository.
 func sweepLine(st *state.Store, workspaceID, repo, prefix string) string {
 	sw, ok := st.LastSweep(workspaceID, repo)
 	if !ok {
