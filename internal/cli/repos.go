@@ -116,6 +116,7 @@ func runDisable(ctx context.Context, e *Env, args []string) error {
 func runStatus(ctx context.Context, e *Env) error {
 	s := e.Settle()
 	list, _ := e.workspaces(ctx)
+	st, stErr := state.Load(s.CurrentWorkspaceID)
 
 	fmt.Fprintf(e.Out, "server:   %s\n", orDash(s.ServerURL))
 	fmt.Fprintf(e.Out, "config:   %s\n", s.ConfigPath)
@@ -135,10 +136,14 @@ func runStatus(ctx context.Context, e *Env) error {
 			fmt.Fprintln(e.Out, "  repositories: none")
 			continue
 		}
-		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(serverPrefix(list, w.WorkspaceID)))
+		prefix := serverPrefix(list, w.WorkspaceID)
+		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(prefix))
 		fmt.Fprintln(e.Out, "  repositories:")
 		for _, r := range w.Repos {
 			fmt.Fprintf(e.Out, "    %-42s scope: %s\n", r.Name, r.EffectiveScope())
+			if stErr == nil {
+				fmt.Fprint(e.Out, sweepLine(st, w.WorkspaceID, r.Name, prefix))
+			}
 		}
 	}
 
@@ -183,6 +188,28 @@ func (e *Env) workspaceLabel(ctx context.Context, id string) string {
 		return short(id)
 	}
 	return label(list, id)
+}
+
+// sweepLine reports what the last pass over a repository saw, and says so
+// loudest when everything was discarded. A sweep that examines pull requests
+// and keeps none prints nothing while it runs, which is indistinguishable from
+// a quiet repository: that is how a wrong issue prefix hides.
+func sweepLine(st *state.Store, workspaceID, repo, prefix string) string {
+	sw, ok := st.LastSweep(workspaceID, repo)
+	if !ok {
+		return ""
+	}
+	when := sw.At.Local().Format("2006-01-02 15:04")
+	switch {
+	case sw.Examined == 0:
+		return fmt.Sprintf("      last sweep %s: no pull request in range\n", when)
+	case sw.Skipped == sw.Examined:
+		return fmt.Sprintf("      last sweep %s: %d examined, none referencing %s-<n>\n",
+			when, sw.Examined, orDash(prefix))
+	default:
+		return fmt.Sprintf("      last sweep %s: %d examined, %d referencing %s-<n>\n",
+			when, sw.Examined, sw.Examined-sw.Skipped, orDash(prefix))
+	}
 }
 
 func orDash(s string) string {

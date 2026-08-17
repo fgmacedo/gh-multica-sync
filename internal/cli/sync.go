@@ -98,7 +98,7 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		} else if snaps, err = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); err != nil {
 			return err
 		}
-		n, eerr := e.emit(ctx, ws, prefix, sender, st, snaps)
+		n, eerr := e.emit(ctx, ws, full, prefix, sender, st, snaps)
 		sent += n
 		if eerr != nil {
 			return eerr
@@ -193,7 +193,7 @@ func runPoll(ctx context.Context, e *Env) error {
 			}
 			return 0
 		}
-		n, eerr := e.emit(ctx, t.ws, t.prefix, sender, st, snaps)
+		n, eerr := e.emit(ctx, t.ws, t.owner+"/"+t.repo, t.prefix, sender, st, snaps)
 		if eerr != nil {
 			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, eerr)
 			if firstErr == nil {
@@ -234,10 +234,14 @@ func runPoll(ctx context.Context, e *Env) error {
 
 // emit compares each snapshot against what we already knew and sends only what
 // changed.
-func (e *Env) emit(ctx context.Context, ws config.Workspace, prefix string, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
-	sent := 0
+func (e *Env) emit(ctx context.Context, ws config.Workspace, repo, prefix string, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
+	sent, skipped := 0, 0
+	// Recorded even when a send fails midway, so status reflects the pass that
+	// actually happened.
+	defer func() { st.RecordSweep(ws.WorkspaceID, repo, len(snaps), skipped) }()
 	for _, snap := range snaps {
 		if !payload.MentionsIssue(snap, prefix) {
+			skipped++
 			continue
 		}
 		action, changed := payload.DeriveAction(st.Previous(ws.WorkspaceID, snap), snap)

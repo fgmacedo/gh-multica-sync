@@ -25,12 +25,26 @@ type Entry struct {
 	Action   string           `json:"last_action"`
 }
 
+// Sweep is what the last pass over a repository saw.
+//
+// Skipped is the count that has no other witness: a pull request with no card
+// reference is dropped without a line of output, so a repository being examined
+// and fully discarded looks exactly like a repository where nothing changed.
+// That is how a stale issue prefix stayed invisible for two days.
+type Sweep struct {
+	Examined int       `json:"examined"`
+	Skipped  int       `json:"skipped"`
+	At       time.Time `json:"at"`
+}
+
 // Store is the whole file: entries keyed by owner/repo#number, an avatar cache
-// by login, and push marks left by the optional hook.
+// by login, push marks left by the optional hook, and the last sweep per
+// repository.
 type Store struct {
 	Entries map[string]Entry     `json:"entries"`
 	Avatars map[string]string    `json:"avatars,omitempty"`
 	Pushes  map[string]time.Time `json:"pushes,omitempty"`
+	Sweeps  map[string]Sweep     `json:"sweeps,omitempty"`
 }
 
 func Path() string { return filepath.Join(discover.StateDir(), "state.json") }
@@ -49,7 +63,12 @@ func Key(workspaceID, owner, repo string, number int32) string {
 // unrecognized key looks like a pull request we have never seen, and the next
 // sweep would re-emit all of them, closing cards that merged long ago.
 func Load(legacyWorkspace string) (*Store, error) {
-	s := &Store{Entries: map[string]Entry{}, Avatars: map[string]string{}, Pushes: map[string]time.Time{}}
+	s := &Store{
+		Entries: map[string]Entry{},
+		Avatars: map[string]string{},
+		Pushes:  map[string]time.Time{},
+		Sweeps:  map[string]Sweep{},
+	}
 	raw, err := os.ReadFile(Path())
 	if os.IsNotExist(err) {
 		return s, nil
@@ -68,6 +87,9 @@ func Load(legacyWorkspace string) (*Store, error) {
 	}
 	if s.Pushes == nil {
 		s.Pushes = map[string]time.Time{}
+	}
+	if s.Sweeps == nil {
+		s.Sweeps = map[string]Sweep{}
 	}
 	if legacyWorkspace != "" {
 		for k, v := range s.Entries {
@@ -128,6 +150,18 @@ func (s *Store) Record(workspaceID string, snap payload.Snapshot, action string)
 		SyncedAt: time.Now().UTC(),
 		Action:   action,
 	}
+}
+
+// RecordSweep stores what the pass over a repository saw, keyed like the
+// entries so two boards watching the same repository each keep their own count.
+func (s *Store) RecordSweep(workspaceID, repo string, examined, skipped int) {
+	s.Sweeps[workspaceID+"|"+repo] = Sweep{Examined: examined, Skipped: skipped, At: time.Now().UTC()}
+}
+
+// LastSweep returns the last pass over a repository, if there was one.
+func (s *Store) LastSweep(workspaceID, repo string) (Sweep, bool) {
+	sw, ok := s.Sweeps[workspaceID+"|"+repo]
+	return sw, ok
 }
 
 // MarkPush records that a push happened in a repository. The optional pre-push
