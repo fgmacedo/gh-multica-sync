@@ -75,16 +75,14 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		number = int32(n)
 	}
 
-	sent := 0
-	for _, ws := range workspaces {
+	syncOne := func(ws config.Workspace) (int, error) {
 		prefix := prefixes[ws.WorkspaceID]
 		if prefix == "" {
-			return fmt.Errorf("workspace %s has no issue prefix: no pull request can reference a card",
-				short(ws.WorkspaceID))
+			return 0, fmt.Errorf("no issue prefix: no pull request can reference a card")
 		}
 		sender, serr := e.newSender(s, ws)
 		if serr != nil {
-			return serr
+			return 0, serr
 		}
 		rcfg, _ := ws.Repo(full)
 		var snaps []payload.Snapshot
@@ -92,16 +90,31 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 			// A pull request named explicitly bypasses the scope filter.
 			snap, ferr := e.Forge.PullRequest(ctx, owner, repo, number)
 			if ferr != nil {
-				return ferr
+				return 0, ferr
 			}
 			snaps = []payload.Snapshot{snap}
-		} else if snaps, err = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); err != nil {
-			return err
+		} else {
+			var lerr error
+			if snaps, lerr = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); lerr != nil {
+				return 0, lerr
+			}
 		}
-		n, eerr := e.emit(ctx, ws, full, prefix, sender, st, snaps)
+		return e.emit(ctx, ws, full, prefix, sender, st, snaps)
+	}
+
+	// One failing workspace does not cancel the others, the same way the poll
+	// treats one failing repository: a repository enabled in two boards would
+	// otherwise lose the healthy board to the broken one.
+	sent := 0
+	var firstErr error
+	for _, ws := range workspaces {
+		n, werr := syncOne(ws)
 		sent += n
-		if eerr != nil {
-			return eerr
+		if werr != nil {
+			fmt.Fprintf(e.Err, "warning: workspace %s: %v\n", short(ws.WorkspaceID), werr)
+			if firstErr == nil {
+				firstErr = werr
+			}
 		}
 	}
 
@@ -109,7 +122,7 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 	fmt.Fprintf(e.Out, "%s: %d event(s) sent across %d workspace(s).\n", full, sent, len(workspaces))
-	return nil
+	return firstErr
 }
 
 func runPoll(ctx context.Context, e *Env) error {
