@@ -24,7 +24,8 @@ func TestMentionsIssue(t *testing.T) {
 		{"longer word ending in the prefix", "JUS", Snapshot{Title: "BONJUS-1 unrelated"}, false},
 		{"key is not a prefix of a longer key", "MAC", Snapshot{Title: "MAC-123 something"}, true},
 
-		{"empty prefix disables the filter", "", Snapshot{Title: "anything"}, true},
+		{"empty prefix mirrors nothing", "", Snapshot{Title: "anything"}, false},
+		{"empty prefix mirrors nothing, even a key-shaped title", "", Snapshot{Title: "MAC-12 work"}, false},
 	}
 
 	for _, c := range cases {
@@ -41,10 +42,7 @@ func TestMentionsIssueDoesNotMatchNumericPrefix(t *testing.T) {
 	if !MentionsIssue(Snapshot{Title: "MAC-12 work"}, "MAC") {
 		t.Fatal("MAC-12 should match prefix MAC")
 	}
-	re, err := issueKeyPattern("MAC")
-	if err != nil {
-		t.Fatal(err)
-	}
+	re := issueKeyPattern("MAC")
 	if !re.MatchString("MAC-12") || !re.MatchString("MAC-1") {
 		t.Fatal("both keys should match the prefix pattern")
 	}

@@ -50,12 +50,9 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 	w := f.Find(wsID)
+	prefix := ""
 	if list, lerr := e.workspaces(ctx); lerr == nil {
-		for _, info := range list {
-			if info.ID == wsID {
-				w.IssuePrefix = info.IssuePrefix
-			}
-		}
+		prefix = serverPrefix(list, wsID)
 	}
 	if existing, ok := w.Repo(full); ok && existing.Scope == scope {
 		fmt.Fprintf(e.Out, "%s was already enabled in this workspace.\n", full)
@@ -72,8 +69,8 @@ func runEnable(ctx context.Context, e *Env, args []string) error {
 		scopeNote = "every recent pull request"
 	}
 	fmt.Fprintf(e.Out, "%s enabled in workspace %s (%s).\n", full, e.workspaceLabel(ctx, wsID), scopeNote)
-	if w.IssuePrefix != "" {
-		fmt.Fprintf(e.Out, "Only pull requests referencing %s-<n> are mirrored.\n", w.IssuePrefix)
+	if prefix != "" {
+		fmt.Fprintf(e.Out, "Only pull requests referencing %s-<n> are mirrored.\n", prefix)
 	}
 	if w.InstallationID == 0 {
 		fmt.Fprintf(e.Out, "This workspace has no installation yet: gh multica-sync bootstrap --workspace %s\n", wsID)
@@ -119,6 +116,7 @@ func runDisable(ctx context.Context, e *Env, args []string) error {
 func runStatus(ctx context.Context, e *Env) error {
 	s := e.Settle()
 	list, _ := e.workspaces(ctx)
+	st, stErr := state.Load(s.CurrentWorkspaceID)
 
 	fmt.Fprintf(e.Out, "server:   %s\n", orDash(s.ServerURL))
 	fmt.Fprintf(e.Out, "config:   %s\n", s.ConfigPath)
@@ -138,10 +136,14 @@ func runStatus(ctx context.Context, e *Env) error {
 			fmt.Fprintln(e.Out, "  repositories: none")
 			continue
 		}
-		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(w.IssuePrefix))
+		prefix := serverPrefix(list, w.WorkspaceID)
+		fmt.Fprintf(e.Out, "  issue prefix: %s\n", orDash(prefix))
 		fmt.Fprintln(e.Out, "  repositories:")
 		for _, r := range w.Repos {
 			fmt.Fprintf(e.Out, "    %-42s scope: %s\n", r.Name, r.EffectiveScope())
+			if stErr == nil {
+				fmt.Fprint(e.Out, sweepLine(st, w.WorkspaceID, r.Name, prefix))
+			}
 		}
 	}
 
@@ -159,8 +161,7 @@ func runStatus(ctx context.Context, e *Env) error {
 		}
 	}
 
-	st, err := state.Load(s.CurrentWorkspaceID)
-	if err == nil && len(st.Entries) > 0 {
+	if stErr == nil && len(st.Entries) > 0 {
 		fmt.Fprintf(e.Out, "\n%d mirrored pull request(s):\n", len(st.Entries))
 		keys := make([]string, 0, len(st.Entries))
 		for k := range st.Entries {
@@ -186,6 +187,27 @@ func (e *Env) workspaceLabel(ctx context.Context, id string) string {
 		return short(id)
 	}
 	return label(list, id)
+}
+
+// sweepLine reports what the last pass over a repository saw. A total discard
+// gets its own phrasing: it prints nothing while it runs, so it is otherwise
+// indistinguishable from a quiet repository.
+func sweepLine(st *state.Store, workspaceID, repo, prefix string) string {
+	sw, ok := st.LastSweep(workspaceID, repo)
+	if !ok {
+		return ""
+	}
+	when := sw.At.Local().Format("2006-01-02 15:04")
+	switch {
+	case sw.Examined == 0:
+		return fmt.Sprintf("      last sweep %s: no pull request in range\n", when)
+	case sw.Skipped == sw.Examined:
+		return fmt.Sprintf("      last sweep %s: %d examined, none referencing %s-<n>\n",
+			when, sw.Examined, orDash(prefix))
+	default:
+		return fmt.Sprintf("      last sweep %s: %d examined, %d referencing %s-<n>\n",
+			when, sw.Examined, sw.Examined-sw.Skipped, orDash(prefix))
+	}
 }
 
 func orDash(s string) string {

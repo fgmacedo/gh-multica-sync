@@ -23,14 +23,16 @@ import (
 // Each workspace gets its own installation id: Multica fans every event out to
 // all workspaces bound to an installation, so a shared id would mirror personal
 // pull requests into a work board and vice versa.
+//
+// The issue prefix is deliberately absent. The server owns it, renaming it
+// there is a click, and the copy that used to live here went stale once: the
+// sweep went on matching a key nobody used and filtered every pull request out
+// with no output at all, which reads as a repository where nothing changed. A
+// sweep now asks the server, and refuses to run without an answer.
 type Workspace struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID int64  `json:"installation_id"`
-	// IssuePrefix is cached so a sweep knows what a card key looks like without
-	// the multica CLI installed or the server reachable. Refreshed whenever a
-	// command has the answer at hand.
-	IssuePrefix string `json:"issue_prefix,omitempty"`
-	Repos       []Repo `json:"repos"`
+	Repos          []Repo `json:"repos"`
 }
 
 // Scope decides how much of a repository a sweep looks at.

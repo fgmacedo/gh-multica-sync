@@ -26,8 +26,11 @@ const burstWindow = 3 * time.Minute
 // repository may be enabled in more than one board.
 type target struct {
 	owner, repo string
+	full        string // owner/repo as the config spells it
 	ws          config.Workspace
 	cfg         config.Repo
+	prefix      string
+	sender      *webhook.Client
 }
 
 func authorFor(r config.Repo) string {
@@ -55,6 +58,10 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 	if len(workspaces) == 0 {
 		return fmt.Errorf("%s is not enabled in any workspace: run 'gh multica-sync enable'", full)
 	}
+	list, err := e.workspaces(ctx)
+	if err != nil {
+		return fmt.Errorf("resolving issue prefixes: %w", err)
+	}
 
 	st, err := state.Load(s.CurrentWorkspaceID)
 	if err != nil {
@@ -70,11 +77,11 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		number = int32(n)
 	}
 
-	sent := 0
-	for _, ws := range workspaces {
-		sender, serr := e.newSender(s, ws)
-		if serr != nil {
-			return serr
+	syncOne := func(ws config.Workspace) (int, error) {
+		prefix := serverPrefix(list, ws.WorkspaceID)
+		sender, rerr := e.ready(s, ws, prefix)
+		if rerr != nil {
+			return 0, rerr
 		}
 		rcfg, _ := ws.Repo(full)
 		var snaps []payload.Snapshot
@@ -82,16 +89,31 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 			// A pull request named explicitly bypasses the scope filter.
 			snap, ferr := e.Forge.PullRequest(ctx, owner, repo, number)
 			if ferr != nil {
-				return ferr
+				return 0, ferr
 			}
 			snaps = []payload.Snapshot{snap}
-		} else if snaps, err = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); err != nil {
-			return err
+		} else {
+			var lerr error
+			if snaps, lerr = e.Forge.ListPullRequests(ctx, owner, repo, listLimit, authorFor(rcfg)); lerr != nil {
+				return 0, lerr
+			}
 		}
-		n, eerr := e.emit(ctx, ws, sender, st, snaps)
+		return e.emit(ctx, ws, full, prefix, sender, st, snaps)
+	}
+
+	// One failing workspace does not cancel the others, the same way the poll
+	// treats one failing repository: a repository enabled in two boards would
+	// otherwise lose the healthy board to the broken one.
+	sent := 0
+	var firstErr error
+	for _, ws := range workspaces {
+		n, werr := syncOne(ws)
 		sent += n
-		if eerr != nil {
-			return eerr
+		if werr != nil {
+			fmt.Fprintf(e.Err, "warning: workspace %s: %v\n", short(ws.WorkspaceID), werr)
+			if firstErr == nil {
+				firstErr = werr
+			}
 		}
 	}
 
@@ -99,7 +121,7 @@ func runSync(ctx context.Context, e *Env, args []string) error {
 		return err
 	}
 	fmt.Fprintf(e.Out, "%s: %d event(s) sent across %d workspace(s).\n", full, sent, len(workspaces))
-	return nil
+	return firstErr
 }
 
 func runPoll(ctx context.Context, e *Env) error {
@@ -107,49 +129,61 @@ func runPoll(ctx context.Context, e *Env) error {
 	if s.EnabledRepos() == 0 {
 		return nil
 	}
+	list, err := e.workspaces(ctx)
+	if err != nil {
+		return fmt.Errorf("resolving issue prefixes: %w", err)
+	}
 	st, err := state.Load(s.CurrentWorkspaceID)
 	if err != nil {
 		return err
-	}
-
-	var targets []target
-	for _, ws := range s.Workspaces {
-		for _, r := range ws.Repos {
-			owner, repo, perr := github.ParseRepo(r.Name)
-			if perr != nil {
-				fmt.Fprintf(e.Err, "warning: %v\n", perr)
-				continue
-			}
-			targets = append(targets, target{owner: owner, repo: repo, ws: ws, cfg: r})
-		}
 	}
 
 	total := 0
 	var firstErr error
 	var retry []target
 
-	sweep := func(t target) int {
-		sender, serr := e.newSender(s, t.ws)
-		if serr != nil {
-			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, serr)
+	// Prefix and sender are decided once per workspace, and both are why a
+	// workspace can be swept at all: building the sender confirms the
+	// installation binding, which is a question worth asking once a cycle
+	// rather than once per enabled repository.
+	var targets []target
+	for _, ws := range s.Workspaces {
+		prefix := serverPrefix(list, ws.WorkspaceID)
+		sender, werr := e.ready(s, ws, prefix)
+		if werr != nil {
+			fmt.Fprintf(e.Err, "warning: %v\n", werr)
 			if firstErr == nil {
-				firstErr = serr
+				firstErr = werr
 			}
-			return 0
+			continue
 		}
+		for _, r := range ws.Repos {
+			owner, repo, perr := github.ParseRepo(r.Name)
+			if perr != nil {
+				fmt.Fprintf(e.Err, "warning: %v\n", perr)
+				continue
+			}
+			targets = append(targets, target{
+				owner: owner, repo: repo, full: r.Name,
+				ws: ws, cfg: r, prefix: prefix, sender: sender,
+			})
+		}
+	}
+
+	sweep := func(t target) int {
 		snaps, lerr := e.Forge.ListPullRequests(ctx, t.owner, t.repo, listLimit, authorFor(t.cfg))
 		if lerr != nil {
 			// The timer runs unattended, so one unreachable repository must not
 			// cost the others their transitions.
-			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, lerr)
+			fmt.Fprintf(e.Err, "warning: %s: %v\n", t.full, lerr)
 			if firstErr == nil {
 				firstErr = lerr
 			}
 			return 0
 		}
-		n, eerr := e.emit(ctx, t.ws, sender, st, snaps)
+		n, eerr := e.emit(ctx, t.ws, t.full, t.prefix, t.sender, st, snaps)
 		if eerr != nil {
-			fmt.Fprintf(e.Err, "warning: %s/%s: %v\n", t.owner, t.repo, eerr)
+			fmt.Fprintf(e.Err, "warning: %s: %v\n", t.full, eerr)
 			if firstErr == nil {
 				firstErr = eerr
 			}
@@ -162,7 +196,7 @@ func runPoll(ctx context.Context, e *Env) error {
 		total += n
 		// A recent push with nothing new yet: the pull request may be opening
 		// right now, and the next cycle is five minutes away.
-		if n == 0 && st.RecentPush(t.owner+"/"+t.repo, burstWindow) {
+		if n == 0 && st.RecentPush(t.full, burstWindow) {
 			retry = append(retry, t)
 		}
 	}
@@ -174,7 +208,7 @@ func runPoll(ctx context.Context, e *Env) error {
 		case <-time.After(45 * time.Second):
 		}
 		total += sweep(t)
-		delete(st.Pushes, t.owner+"/"+t.repo)
+		delete(st.Pushes, t.full)
 	}
 
 	if err := st.Save(); err != nil {
@@ -188,10 +222,15 @@ func runPoll(ctx context.Context, e *Env) error {
 
 // emit compares each snapshot against what we already knew and sends only what
 // changed.
-func (e *Env) emit(ctx context.Context, ws config.Workspace, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
-	sent := 0
+func (e *Env) emit(ctx context.Context, ws config.Workspace, repo, prefix string, sender *webhook.Client, st *state.Store, snaps []payload.Snapshot) (int, error) {
+	sent, examined, skipped := 0, 0, 0
+	// Counted as we go, not from len(snaps): a send that fails midway leaves the
+	// rest of the list unexamined.
+	defer func() { st.RecordSweep(ws.WorkspaceID, repo, examined, skipped) }()
 	for _, snap := range snaps {
-		if !payload.MentionsIssue(snap, ws.IssuePrefix) {
+		examined++
+		if !payload.MentionsIssue(snap, prefix) {
+			skipped++
 			continue
 		}
 		action, changed := payload.DeriveAction(st.Previous(ws.WorkspaceID, snap), snap)

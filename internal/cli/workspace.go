@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/fgmacedo/gh-multica-sync/internal/bootstrap"
 	"github.com/fgmacedo/gh-multica-sync/internal/config"
+	"github.com/fgmacedo/gh-multica-sync/internal/webhook"
 )
 
 // resolveWorkspace turns a --workspace value into a workspace UUID, falling
@@ -44,6 +46,29 @@ func (e *Env) workspaces(ctx context.Context) ([]workspaceInfo, error) {
 		return nil, fmt.Errorf("no Multica server or token configured")
 	}
 	return bootstrap.NewMultica(s.ServerURL, s.Token).Workspaces()
+}
+
+// errNoPrefix is what every command says when the server reports no prefix for
+// a workspace: nothing can reference a card, so a sweep would discard all of it.
+var errNoPrefix = errors.New("no issue prefix: no pull request can reference a card")
+
+// serverPrefix is the issue prefix the server reports for a workspace, empty
+// when the server does not report one, which is what makes a sweep refuse.
+func serverPrefix(list []workspaceInfo, id string) string {
+	for _, w := range list {
+		if w.ID == id {
+			return w.IssuePrefix
+		}
+	}
+	return ""
+}
+
+// ready reports what a sweep of this workspace needs, or why it cannot run.
+func (e *Env) ready(s config.Settings, ws config.Workspace, prefix string) (*webhook.Client, error) {
+	if prefix == "" {
+		return nil, fmt.Errorf("workspace %s: %w", short(ws.WorkspaceID), errNoPrefix)
+	}
+	return e.newSender(s, ws)
 }
 
 // label renders a workspace for humans, showing the prefix because that is what

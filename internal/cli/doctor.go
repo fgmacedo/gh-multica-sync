@@ -61,7 +61,12 @@ func runDoctor(ctx context.Context, e *Env) error {
 
 	// Per workspace, asked of the running server rather than of the config on
 	// disk: see Multica.Installations.
-	list, _ := e.workspaces(ctx)
+	list, listErr := e.workspaces(ctx)
+	if listErr != nil && s.ServerURL != "" && s.Token != "" {
+		// Without the list there is no prefix, and reporting that as "no issue
+		// prefix" would send you to Multica to set one that is already there.
+		checks = append(checks, check{"workspace list", false, listErr.Error(), ""})
+	}
 	if len(s.Workspaces) == 0 {
 		checks = append(checks, check{"workspaces configured", false, "none",
 			"gh multica-sync bootstrap"})
@@ -91,7 +96,13 @@ func runDoctor(ctx context.Context, e *Env) error {
 				"gh multica-sync bootstrap --workspace " + w.WorkspaceID})
 			continue
 		}
-		info := fmt.Sprintf("installation %d, %s", w.InstallationID, reposLabel(w.Repos))
+		prefix := serverPrefix(list, w.WorkspaceID)
+		if prefix == "" && listErr == nil {
+			checks = append(checks, check{"workspace " + name, false, errNoPrefix.Error(),
+				"set an issue prefix for this workspace in Multica"})
+			continue
+		}
+		info := fmt.Sprintf("installation %d, %s-<n>, %s", w.InstallationID, prefix, reposLabel(w.Repos))
 		checks = append(checks, check{"workspace " + name, true, info, ""})
 	}
 
